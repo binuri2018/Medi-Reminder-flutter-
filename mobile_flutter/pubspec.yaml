@@ -23,6 +23,7 @@ dependencies:
   timezone: ^0.9.4
   android_alarm_manager_plus: ^4.0.8
   speech_to_text: ^7.0.0
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:

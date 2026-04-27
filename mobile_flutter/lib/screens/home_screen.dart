@@ -1,8 +1,9 @@
 import "package:flutter/material.dart";
 import "dart:async";
 import "package:flutter/foundation.dart";
-import "package:permission_handler/permission_handler.dart";
 import "package:flutter_tts/flutter_tts.dart";
+import "package:google_fonts/google_fonts.dart";
+import "package:permission_handler/permission_handler.dart";
 import "package:speech_to_text/speech_to_text.dart" as stt;
 import "package:vibration/vibration.dart";
 
@@ -11,6 +12,7 @@ import "../models/reminder_model.dart";
 import "../services/api_service.dart";
 import "../services/bluetooth_mode_service.dart";
 import "../services/outdoor_alarm_service.dart";
+import "../theme/app_theme.dart";
 import "../widgets/mode_badge.dart";
 import "../widgets/reminder_card.dart";
 
@@ -539,35 +541,132 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     await showModalBottomSheet<void>(
       context: context,
-      builder: (bottomSheetContext) => SafeArea(
-        child: ListView(
-          children: [
-            const ListTile(
-              title: Text("Select Indoor PC/Laptop Bluetooth Device"),
-            ),
-            ...results.map((result) {
-              final label = result.device.platformName.isNotEmpty
-                  ? result.device.platformName
-                  : "Unknown device";
-              return ListTile(
-                title: Text(label),
-                subtitle: Text(result.device.remoteId.str),
-                trailing: Text("${result.rssi} dBm"),
-                onTap: () {
-                  final selected = BluetoothAnchorDevice(
-                    id: result.device.remoteId.str,
-                    name: label,
-                  );
-                  Navigator.of(bottomSheetContext).pop();
-                  _bluetooth.saveAnchor(selected);
-                  if (!mounted) return;
-                  setState(() {
-                    _bluetoothStatus = "anchor_configured";
-                  });
-                },
-              );
-            }),
-          ],
+      isScrollControlled: true,
+      builder: (bottomSheetContext) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.55,
+        minChildSize: 0.35,
+        maxChildSize: 0.92,
+        builder: (ctx, scrollController) => DecoratedBox(
+          decoration: const BoxDecoration(
+            color: AppColors.slateCard,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+                child: Text(
+                  "Choose your PC",
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  "Pick the Bluetooth device that represents your indoor computer so proximity can switch modes.",
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    color: AppColors.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  itemCount: results.length,
+                  itemBuilder: (context, index) {
+                    final result = results[index];
+                    final label = result.device.platformName.isNotEmpty
+                        ? result.device.platformName
+                        : "Unknown device";
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Material(
+                        color: AppColors.slateBg,
+                        borderRadius: BorderRadius.circular(16),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            final selected = BluetoothAnchorDevice(
+                              id: result.device.remoteId.str,
+                              name: label,
+                            );
+                            Navigator.of(bottomSheetContext).pop();
+                            _bluetooth.saveAnchor(selected);
+                            if (!mounted) return;
+                            setState(() {
+                              _bluetoothStatus = "anchor_configured";
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.bluetooth_rounded,
+                                  color: AppColors.tealDeep,
+                                  size: 28,
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        label,
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        result.device.remoteId.str,
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.tealDeep.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    "${result.rssi} dBm",
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: AppColors.tealDeep,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -623,171 +722,606 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _refreshHistory();
   }
 
+  Future<void> _onPullRefresh() async {
+    await _refreshCore(force: true);
+    await _refreshHistory(silent: true, force: true);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Outdoor Reminder Simulator"),
-        actions: [
-          IconButton(
-            onPressed: () async {
-              await _refreshCore();
-              await _refreshHistory();
-            },
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: ListView(
-                children: [
-                  ModeBadge(mode: _mode),
-                  const SizedBox(height: 14),
-                  if (ApiConfig.isMisconfigured) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        border: Border.all(color: Colors.red.shade400, width: 1.5),
-                        borderRadius: BorderRadius.circular(8),
+          ? _LoadingHero(scheme: scheme)
+          : RefreshIndicator(
+              color: scheme.primary,
+              onRefresh: _onPullRefresh,
+              edgeOffset: 120,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                slivers: [
+                  SliverAppBar.large(
+                    floating: false,
+                    pinned: true,
+                    expandedHeight: 108,
+                    backgroundColor: AppColors.slateBg,
+                    surfaceTintColor: Colors.transparent,
+                    flexibleSpace: FlexibleSpaceBar(
+                      titlePadding: const EdgeInsetsDirectional.only(
+                        start: 20,
+                        bottom: 14,
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "Backend URL is a placeholder, not a real IP.",
-                            style: TextStyle(
-                              color: Colors.red.shade900,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            "Current value: ${ApiConfig.baseUrl}\n\n"
-                            "Re-run with your real PC LAN IP, e.g.:\n"
-                            "flutter run --dart-define=API_BASE_URL=http://10.235.154.28:8000\n\n"
-                            "Until this is fixed, reminders will not sync, the Done "
-                            "button cannot mark anything as done on the backend, and "
-                            "the voice/notification popup cannot fire on time.",
-                            style: TextStyle(
-                              color: Colors.red.shade900,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (_error.isNotEmpty) ...[
-                    Text(
-                      _error,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  Text(
-                    "Backend: ${ApiService.baseUrl}",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    "Mode source: $_modeSource • Auto setting: $_autoModeSetting",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    "Bluetooth: $_bluetoothStatus • RSSI: ${_lastRssi != null ? "$_lastRssi dBm" : "N/A"}",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  if (_bluetooth.anchor != null)
-                    Text(
-                      "Anchor: ${_bluetooth.anchor!.name} (${_bluetooth.anchor!.id})",
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  if (_bluetoothReason.isNotEmpty)
-                    Text(
-                      "Reason: $_bluetoothReason",
-                      style: const TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ElevatedButton(
-                        onPressed: _configureBluetoothAnchor,
-                        child: const Text("Configure PC Bluetooth"),
-                      ),
-                      OutlinedButton(
-                        onPressed: () async {
-                          final next =
-                              _autoModeSetting == "bluetooth_auto" ? "manual" : "bluetooth_auto";
-                          try {
-                            final state = await _api.updateMode(
-                              mode: _mode,
-                              source: "manual",
-                              autoModeSetting: next,
-                              deviceId: _bluetooth.anchor?.id,
-                              rssi: _lastRssi,
-                              reason: "Auto mode setting changed from mobile app",
-                            );
-                            if (!mounted) return;
-                            setState(() {
-                              _autoModeSetting = state.autoModeSetting;
-                              _modeSource = state.source;
-                            });
-                          } catch (_) {
-                            if (!mounted) return;
-                            setState(() {
-                              _error = "Failed to update auto mode setting.";
-                            });
-                          }
-                        },
-                        child: Text(
-                          _autoModeSetting == "bluetooth_auto"
-                              ? "Disable Bluetooth Auto Mode"
-                              : "Enable Bluetooth Auto Mode",
+                      title: Text(
+                        "Reminders",
+                        style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 22,
+                          color: AppColors.textPrimary,
                         ),
                       ),
+                      background: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              AppColors.tealMuted.withValues(alpha: 0.14),
+                              AppColors.slateBg,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    actions: [
+                      IconButton.filledTonal(
+                        onPressed: () async {
+                          await _refreshCore(force: true);
+                          await _refreshHistory(silent: true, force: true);
+                        },
+                        icon: const Icon(Icons.refresh_rounded),
+                        tooltip: "Refresh",
+                      ),
+                      const SizedBox(width: 8),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    "Latest Reminder",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  if (_latest == null)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text("No outdoor reminders yet."),
-                    ),
-                  if (_latest != null)
-                    ReminderCard(
-                      reminder: _latest!,
-                      onAcknowledge: () => _acknowledge(_latest!),
-                    ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    "History",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  ..._history.map(
-                    (item) => ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(item.title),
-                      subtitle: Text(
-                        "${formatTimestampToLocal(item.timestamp)} • ${item.status}",
-                      ),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+                    sliver: SliverList(
+                      delegate: SliverChildListDelegate([
+                        ModeBadge(mode: _mode),
+                        const SizedBox(height: 20),
+                        if (ApiConfig.isMisconfigured) ...[
+                          const _ConfigWarningCard(url: ApiConfig.baseUrl),
+                          const SizedBox(height: 16),
+                        ],
+                        if (_error.isNotEmpty) ...[
+                          _ErrorBanner(message: _error),
+                          const SizedBox(height: 16),
+                        ],
+                        _ConnectionStatusCard(
+                          backendUrl: ApiService.baseUrl,
+                          modeSource: _modeSource,
+                          autoModeSetting: _autoModeSetting,
+                          bluetoothStatus: _bluetoothStatus,
+                          rssi: _lastRssi,
+                          anchorName: _bluetooth.anchor?.name,
+                          anchorId: _bluetooth.anchor?.id,
+                          bluetoothReason: _bluetoothReason,
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.tonalIcon(
+                                onPressed: _configureBluetoothAnchor,
+                                icon: const Icon(Icons.bluetooth_searching_rounded),
+                                label: const Text("Link PC"),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final next = _autoModeSetting == "bluetooth_auto"
+                                      ? "manual"
+                                      : "bluetooth_auto";
+                                  try {
+                                    final state = await _api.updateMode(
+                                      mode: _mode,
+                                      source: "manual",
+                                      autoModeSetting: next,
+                                      deviceId: _bluetooth.anchor?.id,
+                                      rssi: _lastRssi,
+                                      reason: "Auto mode setting changed from mobile app",
+                                    );
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _autoModeSetting = state.autoModeSetting;
+                                      _modeSource = state.source;
+                                    });
+                                  } catch (_) {
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _error = "Failed to update auto mode setting.";
+                                    });
+                                  }
+                                },
+                                icon: Icon(
+                                  _autoModeSetting == "bluetooth_auto"
+                                      ? Icons.bluetooth_disabled_rounded
+                                      : Icons.bluetooth_connected_rounded,
+                                ),
+                                label: Text(
+                                  _autoModeSetting == "bluetooth_auto"
+                                      ? "Auto off"
+                                      : "Auto mode",
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 28),
+                        const _SectionTitle(
+                          icon: Icons.notifications_active_outlined,
+                          title: "Active reminder",
+                          subtitle: "Outdoor alerts & voice apply here",
+                        ),
+                        const SizedBox(height: 12),
+                        if (_latest == null)
+                          const _EmptyLatestCard()
+                        else
+                          ReminderCard(
+                            reminder: _latest!,
+                            onAcknowledge: () => _acknowledge(_latest!),
+                          ),
+                        const SizedBox(height: 28),
+                        _SectionTitle(
+                          icon: Icons.history_rounded,
+                          title: "History",
+                          subtitle:
+                              "${_history.length} ${_history.length == 1 ? "item" : "items"}",
+                        ),
+                        const SizedBox(height: 12),
+                        if (_history.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text(
+                                "No history yet.",
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          ..._history.map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _HistoryTile(reminder: item),
+                            ),
+                          ),
+                      ]),
                     ),
                   ),
                 ],
               ),
             ),
+    );
+  }
+}
+
+class _LoadingHero extends StatelessWidget {
+  const _LoadingHero({required this.scheme});
+
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.tealMuted.withValues(alpha: 0.2),
+            AppColors.slateBg,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 52,
+              height: 52,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "Loading your reminders…",
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: AppColors.tealDeep, size: 22),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyLatestCard extends StatelessWidget {
+  const _EmptyLatestCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppColors.slateCard,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.textSecondary.withValues(alpha: 0.12),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.event_available_rounded,
+            size: 40,
+            color: AppColors.textSecondary.withValues(alpha: 0.45),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "No active reminder",
+            style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Create one from your dashboard. When mode is Outdoor, you will get alerts here.",
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              height: 1.4,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistoryTile extends StatelessWidget {
+  const _HistoryTile({required this.reminder});
+
+  final ReminderModel reminder;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = isReminderPending(reminder.status);
+    return Material(
+      color: AppColors.slateCard,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {},
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: pending
+                      ? AppColors.outdoorAccent.withValues(alpha: 0.12)
+                      : AppColors.tealDeep.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  pending ? Icons.schedule_rounded : Icons.check_rounded,
+                  color: pending ? AppColors.outdoorAccent : AppColors.tealDeep,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      reminder.title.trim().isEmpty ? "Reminder" : reminder.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "${formatTimestampToLocal(reminder.timestamp)} · ${reminder.status}",
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusCard extends StatelessWidget {
+  const _ConnectionStatusCard({
+    required this.backendUrl,
+    required this.modeSource,
+    required this.autoModeSetting,
+    required this.bluetoothStatus,
+    required this.rssi,
+    required this.anchorName,
+    required this.anchorId,
+    required this.bluetoothReason,
+  });
+
+  final String backendUrl;
+  final String modeSource;
+  final String autoModeSetting;
+  final String bluetoothStatus;
+  final int? rssi;
+  final String? anchorName;
+  final String? anchorId;
+  final String bluetoothReason;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.slateCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppColors.tealDeep.withValues(alpha: 0.1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.dns_rounded, size: 20, color: AppColors.tealDeep),
+              const SizedBox(width: 8),
+              Text(
+                "Connection",
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _miniRow("Server", backendUrl),
+          _miniRow("Mode source", modeSource),
+          _miniRow("Auto", autoModeSetting),
+          _miniRow(
+            "Bluetooth",
+            "$bluetoothStatus · RSSI ${rssi != null ? "$rssi dBm" : "—"}",
+          ),
+          if (anchorName != null && anchorId != null)
+            _miniRow("Linked PC", "$anchorName"),
+          if (bluetoothReason.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                bluetoothReason,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  color: AppColors.outdoorAccent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniRow(String k, String v) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 92,
+            child: Text(
+              k,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              v,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConfigWarningCard extends StatelessWidget {
+  const _ConfigWarningCard({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.errorContainer,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.errorBorder.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Color(0xFFB91C1C)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "Fix API address",
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFFB91C1C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Current: $url\n\nUse a real LAN IP, e.g. "
+            "--dart-define=API_BASE_URL=http://192.168.x.x:8000",
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              height: 1.45,
+              color: const Color(0xFF7F1D1D),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.errorContainer,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: Color(0xFFB91C1C)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                height: 1.4,
+                color: const Color(0xFF7F1D1D),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

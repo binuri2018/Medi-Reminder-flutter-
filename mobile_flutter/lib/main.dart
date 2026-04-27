@@ -7,6 +7,7 @@ import "config/api_config.dart";
 import "firebase_options.dart";
 import "screens/home_screen.dart";
 import "services/api_service.dart";
+import "theme/app_theme.dart";
 import "services/background_reminder_service.dart";
 import "services/fcm_service.dart";
 import "services/outdoor_alarm_service.dart";
@@ -32,11 +33,9 @@ class MobileReminderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "Outdoor Reminder Simulator",
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
+      title: "Outdoor Reminders",
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
       home: const HomeScreen(),
     );
   }

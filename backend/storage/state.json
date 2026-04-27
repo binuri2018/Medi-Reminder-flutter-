@@ -9,12 +9,13 @@
   "mobile_device_platform": "android",
   "mobile_device_id": null,
   "latest_reminder": {
-    "id": "Ix4d0R8Su6xJRcCe8POF",
-    "title": "dinner",
-    "message": "its dinner time ",
-    "timestamp": "2026-04-27T20:30:00Z",
+    "id": "XQcUpoJPbqmi6H9a2xZU",
+    "title": "medicine",
+    "message": "take your medicine now",
+    "timestamp": "2026-04-27T21:08:00Z",
     "mode": "outdoor",
-    "status": "pending"
+    "status": "synced",
+    "acknowledgedBy": "android_phone"
   },
   "history": [
     {
@@ -376,6 +377,15 @@
       "timestamp": "2026-04-27T20:30:00Z",
       "mode": "outdoor",
       "status": "pending"
+    },
+    {
+      "id": "XQcUpoJPbqmi6H9a2xZU",
+      "title": "medicine",
+      "message": "take your medicine now",
+      "timestamp": "2026-04-27T21:08:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
     }
   ]
 }
