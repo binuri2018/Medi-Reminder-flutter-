@@ -94,7 +94,18 @@ class FcmService {
         }
         return;
       }
-      if (mode.toString() != "outdoor") {
+      // Critical guard: never schedule/notify a non-pending reminder
+      // (acknowledged/done/completed/...) regardless of casing.
+      if (!isReminderPending(status.toString())) {
+        await OutdoorAlarmService.cancelReminder(reminderId.toString());
+        if (kDebugMode) {
+          debugPrint(
+            "FCM reminder sync cancelled: status=${status.toString()} id=$reminderId",
+          );
+        }
+        return;
+      }
+      if (mode.toString().trim().toLowerCase() != "outdoor") {
         await OutdoorAlarmService.cancelReminder(reminderId.toString());
         return;
       }

@@ -3,8 +3,10 @@ import "dart:async";
 import "package:flutter/foundation.dart";
 import "package:permission_handler/permission_handler.dart";
 import "package:flutter_tts/flutter_tts.dart";
+import "package:speech_to_text/speech_to_text.dart" as stt;
 import "package:vibration/vibration.dart";
 
+import "../config/api_config.dart";
 import "../models/reminder_model.dart";
 import "../services/api_service.dart";
 import "../services/bluetooth_mode_service.dart";
@@ -23,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final ApiService _api = ApiService();
   final BluetoothModeService _bluetooth = BluetoothModeService();
   final FlutterTts _tts = FlutterTts();
+  final stt.SpeechToText _speech = stt.SpeechToText();
   String _mode = "indoor";
   String _modeSource = "manual";
   String _autoModeSetting = "manual";
@@ -35,7 +38,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _error = "";
   // Strict centralized polling: one owner, one core timer, one history timer.
   static const Duration _kModePollInterval = Duration(seconds: 5);
-  static const Duration _kHistoryPollInterval = Duration(seconds: 30);
+  /// History list sync. Kept reasonably tight so multiple future reminders
+  /// (not only `/latest`) still reach [OutdoorAlarmService] quickly. The
+  /// critical path for the current reminder is `_refreshCore` every 5s.
+  static const Duration _kHistoryPollInterval = Duration(seconds: 10);
   static const Duration _kBluetoothTickInterval = Duration(seconds: 15);
 
   Timer? _corePollTimer;
@@ -49,22 +55,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   DateTime? _lastHistoryRefresh;
   String? _lastAlertKey;
 
+  // Voice command pipeline state. `_speechActive` makes the listener
+  // single-shot per alert, while `_speechInitTried` avoids re-initializing the
+  // STT engine on every reminder.
+  bool _speechAvailable = false;
+  bool _speechInitTried = false;
+  bool _speechActive = false;
+  String? _voiceCommandReminderId;
+
+  /// Shared init future so [FlutterTts.speak] never runs before the Android
+  /// TextToSpeech engine has bound (common cause of silent TTS).
+  late final Future<void> _ttsInitFuture;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _requestNotificationPermission();
-    _setupTts();
+    _ttsInitFuture = _setupTts();
     _initBluetooth();
     _startPolling();
+    // Permissions must be requested ONCE, sequentially, after the activity
+    // is attached - never from inside polling/sync code. permission_handler
+    // serializes to a single in-flight request and rejects parallel calls.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_runOneTimePermissionFlow());
+      _onPendingTapChanged();
+    });
+    // Surface any reminder the user just tapped on (foreground tap, app
+    // relaunch from notification, or a queued tap restored from prefs).
+    OutdoorAlarmService.pendingTapNotifier.addListener(_onPendingTapChanged);
   }
 
-  Future<void> _requestNotificationPermission() async {
-    try {
-      await Permission.notification.request();
-    } catch (_) {
-      // Keep app usable even if notification permission API is unavailable.
-    }
+  bool _permissionsRequested = false;
+
+  Future<void> _runOneTimePermissionFlow() async {
+    if (_permissionsRequested) return;
+    _permissionsRequested = true;
+    // Centralised permission flow: every permission is requested in series so
+    // package:permission_handler never sees overlapping requests. This is the
+    // only place ensurePermissions() should be invoked from on the UI thread.
+    await OutdoorAlarmService.ensurePermissions();
   }
 
   void _startPolling() {
@@ -104,8 +134,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    OutdoorAlarmService.pendingTapNotifier.removeListener(_onPendingTapChanged);
     _cancelAllPollingTimers();
     _tts.stop();
+    if (_speech.isListening) {
+      unawaited(_speech.stop());
+    }
     super.dispose();
   }
 
@@ -133,15 +167,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _setupTts() async {
-    await _tts.setLanguage("en-US");
-    await _tts.setSpeechRate(0.48);
-    await _tts.setPitch(1.0);
-    await _tts.setVolume(1.0);
+    try {
+      await _tts.setLanguage("en-US");
+      await _tts.setSpeechRate(0.48);
+      await _tts.setPitch(1.0);
+      await _tts.setVolume(1.0);
+      // Flush queue so a stale utterance cannot block the next speak().
+      try {
+        await _tts.setQueueMode(0);
+      } catch (_) {
+        // Not all platforms implement queue mode.
+      }
+      // Make `await _tts.speak(...)` actually wait for completion so we can
+      // safely chain speech recognition after TTS.
+      try {
+        await _tts.awaitSpeakCompletion(true);
+      } catch (_) {
+        // Older flutter_tts builds may not support this; safe to ignore.
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("_setupTts failed: $e");
+      }
+    }
   }
 
-  Future<void> _triggerOutdoorAlert(ReminderModel reminder) async {
+  /// Plays the reminder's voice + vibration locally and then opens a short
+  /// safe window to listen for a "done" voice command.
+  ///
+  /// `force` is set to `true` when called from a notification tap so the user
+  /// who just opened the app reliably hears the message even if the same
+  /// reminder was already alerted earlier in the foreground polling pass.
+  Future<void> _triggerOutdoorAlert(
+    ReminderModel reminder, {
+    bool force = false,
+  }) async {
+    // Critical guard: never alert a non-pending reminder, even if a stale
+    // foreground poll observed it before the status flip propagated.
+    if (!isReminderPending(reminder.status)) return;
+
     final alertKey = "${reminder.id}-${reminder.timestamp}-${reminder.status}";
-    if (_lastAlertKey == alertKey) return;
+    if (!force && _lastAlertKey == alertKey) return;
     _lastAlertKey = alertKey;
 
     try {
@@ -156,14 +222,169 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Keep reminder flow active even if vibration plugin fails.
     }
 
+    final spokenMessage = reminder.message.trim().isNotEmpty
+        ? reminder.message.trim()
+        : (reminder.title.trim().isNotEmpty
+            ? reminder.title.trim()
+            : "Please check your reminder now.");
+    final spokenTitle = reminder.title.trim().isNotEmpty
+        ? reminder.title.trim()
+        : "Outdoor reminder";
+
+    final utterance = "Reminder alert. $spokenTitle. $spokenMessage";
     try {
-      final message = reminder.message.trim().isNotEmpty
-          ? reminder.message.trim()
-          : "Please check your reminder now.";
-      await _tts.speak("Reminder alert. ${reminder.title}. $message");
-    } catch (_) {
-      // Keep reminder flow active even if TTS fails.
+      await _ttsInitFuture;
+      // Cold start / activity resume: engine and audio route may still be
+      // settling; a short yield fixes "vibration only" on some Samsung builds.
+      if (force) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      }
+      try {
+        await _tts.stop();
+      } catch (_) {}
+      await _tts.setLanguage("en-US");
+      await _tts.setSpeechRate(0.48);
+      await _tts.setPitch(1.0);
+      await _tts.setVolume(1.0);
+      try {
+        await _tts.awaitSpeakCompletion(true);
+      } catch (_) {}
+      try {
+        await _tts.setQueueMode(0);
+      } catch (_) {}
+      final dynamic speakResult = await _tts.speak(utterance);
+      if (kDebugMode) {
+        debugPrint(
+          "TTS speak done: force=$force id=${reminder.id} result=$speakResult",
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("TTS speak failed: id=${reminder.id} err=$e");
+      }
     }
+
+    // Mic / STT can steal audio focus on some devices if we start listening
+    // in the same frame as TTS teardown — brief gap keeps voice audible.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    // Voice "done" listening only makes sense once TTS has stopped using
+    // the audio output, otherwise STT will pick up our own playback.
+    if (!mounted) return;
+    unawaited(_listenForDoneCommand(reminder));
+  }
+
+  /// Opens a short STT window to detect "done"/"completed"/"finish"/"finished".
+  /// Runs at most one window per reminder ID so a UI rebuild cannot stack
+  /// multiple recognizers.
+  Future<void> _listenForDoneCommand(ReminderModel reminder) async {
+    if (_speechActive) return;
+    if (_voiceCommandReminderId == reminder.id) return;
+    _voiceCommandReminderId = reminder.id;
+    _speechActive = true;
+    try {
+      // Lazy mic permission so we never prompt unless a reminder fires.
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        if (kDebugMode) {
+          debugPrint("voice command skipped: mic permission=$micStatus");
+        }
+        return;
+      }
+
+      if (!_speechInitTried) {
+        _speechInitTried = true;
+        try {
+          _speechAvailable = await _speech.initialize(
+            onStatus: (status) {
+              if (kDebugMode) {
+                debugPrint("speech_to_text status: $status");
+              }
+            },
+            onError: (error) {
+              if (kDebugMode) {
+                debugPrint("speech_to_text error: ${error.errorMsg}");
+              }
+            },
+          );
+        } catch (e) {
+          _speechAvailable = false;
+          if (kDebugMode) {
+            debugPrint("speech_to_text init failed: $e");
+          }
+        }
+      }
+      if (!_speechAvailable) return;
+      if (_speech.isListening) return;
+
+      var matched = false;
+      await _speech.listen(
+        listenFor: const Duration(seconds: 6),
+        pauseFor: const Duration(seconds: 3),
+        listenOptions: stt.SpeechListenOptions(partialResults: true),
+        localeId: "en_US",
+        onResult: (result) async {
+          if (matched) return;
+          if (!_isDoneCommand(result.recognizedWords)) return;
+          matched = true;
+          if (kDebugMode) {
+            debugPrint(
+              "voice 'done' detected: text='${result.recognizedWords}' "
+              "id=${reminder.id}",
+            );
+          }
+          try {
+            await _speech.stop();
+          } catch (_) {
+            // intentional swallow
+          }
+          if (!mounted) return;
+          await _acknowledge(reminder);
+        },
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("voice command failed: $e");
+      }
+    } finally {
+      _speechActive = false;
+    }
+  }
+
+  bool _isDoneCommand(String raw) {
+    final text = raw.toLowerCase().trim();
+    if (text.isEmpty) return false;
+    const triggers = ["done", "completed", "complete", "finish", "finished"];
+    for (final word in triggers) {
+      if (text == word) return true;
+      if (text.contains(" $word") || text.startsWith("$word ")) return true;
+      if (text.contains("$word.") || text.endsWith(" $word")) return true;
+    }
+    return false;
+  }
+
+  /// Reacts to taps on outdoor reminder notifications. Pulls the pending
+  /// reminder, surfaces it on screen, and runs the live alert with `force`
+  /// so the user reliably hears the message right after opening the app.
+  void _onPendingTapChanged() {
+    final reminder = OutdoorAlarmService.pendingTapNotifier.value;
+    if (reminder == null) return;
+    if (!mounted) return;
+    if (kDebugMode) {
+      debugPrint("HomeScreen received pending tap for reminder=${reminder.id}");
+    }
+    setState(() {
+      // Make sure the tapped reminder is the one rendered in the "Latest"
+      // card; the next backend poll will replace it if anything changed.
+      _latest = reminder;
+    });
+    // Only fire the alert if the reminder is still pending. If the user
+    // tapped a stale notification for an already-acknowledged reminder we
+    // simply consume the tap without speaking again.
+    if (isReminderPending(reminder.status)) {
+      unawaited(_triggerOutdoorAlert(reminder, force: true));
+    }
+    unawaited(OutdoorAlarmService.consumePendingTap());
   }
 
   @override
@@ -247,10 +468,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         debugPrint("refreshCore completed in ${sw.elapsedMilliseconds}ms");
       }
       if (!mounted) return;
+
+      // Register exact local alarms from the server's "latest" reminder on
+      // every core poll (5s). Previously only `refreshHistory` (30s) called
+      // `syncFromHistory`, so a new future reminder could sit unscheduled for
+      // tens of seconds — the system notification then fired noticeably late
+      // vs the time the user picked. `syncReminder` is idempotent.
+      if (modeState.mode.trim().toLowerCase() == "outdoor" &&
+          latest != null &&
+          isReminderPending(latest.status)) {
+        // Await scheduling only. Never await [_triggerOutdoorAlert]: a single
+        // TTS utterance can take 10–20s and held [_coreRefreshInFlight] the
+        // whole time, starving the 5s poll so the next [syncReminder] was
+        // late — the system popup looked "delayed" and sometimes never
+        // registered. TTS is fire-and-forget.
+        await OutdoorAlarmService.syncReminder(latest);
+        if (OutdoorAlarmService.shouldPlayInAppVoice(latest)) {
+          unawaited(_triggerOutdoorAlert(latest));
+        }
+      }
+
       final shouldUpdate = _mode != modeState.mode ||
           _modeSource != modeState.source ||
           _autoModeSetting != modeState.autoModeSetting ||
           _latest?.id != latest?.id ||
+          _latest?.timestamp != latest?.timestamp ||
           _latest?.status != latest?.status ||
           _error.isNotEmpty;
       if (!shouldUpdate) return;
@@ -264,11 +506,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       if (_autoModeSetting == "bluetooth_auto") {
         await _runBluetoothAutoTick();
-      }
-      if (modeState.mode == "outdoor" &&
-          latest != null &&
-          latest.status == "pending") {
-        await _triggerOutdoorAlert(latest);
       }
     } catch (e) {
       if (!mounted) return;
@@ -409,6 +646,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 children: [
                   ModeBadge(mode: _mode),
                   const SizedBox(height: 14),
+                  if (ApiConfig.isMisconfigured) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        border: Border.all(color: Colors.red.shade400, width: 1.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Backend URL is a placeholder, not a real IP.",
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Current value: ${ApiConfig.baseUrl}\n\n"
+                            "Re-run with your real PC LAN IP, e.g.:\n"
+                            "flutter run --dart-define=API_BASE_URL=http://10.235.154.28:8000\n\n"
+                            "Until this is fixed, reminders will not sync, the Done "
+                            "button cannot mark anything as done on the backend, and "
+                            "the voice/notification popup cannot fire on time.",
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (_error.isNotEmpty) ...[
                     Text(
                       _error,

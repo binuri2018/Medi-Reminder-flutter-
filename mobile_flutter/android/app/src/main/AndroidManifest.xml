@@ -11,6 +11,26 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required so AndroidNotificationDetails(fullScreenIntent: true) can pop
+         a heads-up alarm UI over the lock screen. Without this permission
+         Android silently downgrades fullScreenIntent to a normal heads-up. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Required so WorkManager and AndroidAlarmManager can keep firing while
+         the app is fully closed. Without this, Samsung/Xiaomi/Huawei OEM
+         battery optimization will skip our 15-minute periodic safety net,
+         and reminders created while the app is killed will not fire at the
+         scheduled time.
+         The matching `Permission.ignoreBatteryOptimizations.request()` call
+         in OutdoorAlarmService prompts the user to whitelist the app the
+         first time the home screen loads. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Foreground service permission is reserved for a future hardening
+         step where we run a persistent service to keep polling reliable
+         even on the most aggressive OEM ROMs. Declared here so the AOT
+         build doesn't need a Gradle reconfigure if we enable it later. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <application
         android:label="mobile_flutter"
         android:name="${applicationName}"
@@ -52,6 +72,14 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Required so package:speech_to_text can find a speech recognition service on Android 11+ -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <!-- Required so package:flutter_tts can find a TTS engine on Android 11+ -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 </manifest>

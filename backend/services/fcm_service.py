@@ -58,19 +58,28 @@ class FcmService:
             return False
         assert self._messaging is not None
         try:
+            # IMPORTANT: We deliberately send a *data-only* high-priority push.
+            #
+            # Why no `notification:` block?
+            # The Flutter app renders the real reminder notification locally
+            # via OutdoorAlarmService so it can attach the "Done" action,
+            # custom alarm sound (res/raw/reminder_alarm) and full-screen
+            # intent. If we ALSO sent a notification block, Android would
+            # auto-display its own basic notification when the app is
+            # backgrounded/killed -- causing the user to see two notifications
+            # for the same reminder, with the auto-displayed one missing the
+            # Done button. Data-only + priority=high still wakes the app's
+            # background isolate (firebaseMessagingBackgroundHandler) so the
+            # local notification fires reliably in foreground, background and
+            # killed states.
+            #
+            # The channel_id below is a hint; the Flutter app is the actual
+            # source of truth for channel settings. It must match the channel
+            # ID used in OutdoorAlarmService (`outdoor_alarm_channel_v2`).
             message = self._messaging.Message(
                 token=token,
-                notification=self._messaging.Notification(
-                    title=f"Reminder: {reminder.title}",
-                    body=reminder.message or "Please check your reminder now.",
-                ),
                 android=self._messaging.AndroidConfig(
                     priority="high",
-                    notification=self._messaging.AndroidNotification(
-                        channel_id="outdoor_reminders_channel",
-                        sound="default",
-                        default_vibrate_timings=True,
-                    ),
                 ),
                 data={
                     "reminderId": reminder.id,
@@ -81,6 +90,7 @@ class FcmService:
                     "outdoor": "true" if reminder.mode.value == "outdoor" else "false",
                     "status": reminder.status.value,
                     "timestamp": reminder.timestamp.isoformat(),
+                    "channelId": "outdoor_alarm_channel_v3",
                 },
             )
             result = self._messaging.send(message)

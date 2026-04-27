@@ -27,6 +27,16 @@ class ReminderModel {
   }
 }
 
+/// Case-insensitive check for whether a reminder is still actionable.
+///
+/// Anything other than `pending` (acknowledged, done, completed, synced, ...)
+/// must be treated as inactive across the entire mobile pipeline: no scheduling,
+/// no notifications, no voice playback, no live alerts.
+bool isReminderPending(String? status) {
+  final normalized = (status ?? "").trim().toLowerCase();
+  return normalized == "pending";
+}
+
 String formatTimestampToLocal(String rawTimestamp) {
   final parsed = DateTime.tryParse(rawTimestamp);
   if (parsed == null) return rawTimestamp;
