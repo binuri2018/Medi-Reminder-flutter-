@@ -1,0 +1,246 @@
+{
+  "mode": "outdoor",
+  "mode_source": "manual",
+  "auto_mode_setting": "manual",
+  "mode_device_id": null,
+  "mode_last_rssi": null,
+  "mode_last_update_time": "2026-04-25T20:32:33.358000+00:00",
+  "mobile_device_token": "fbNQ6h15SeSpPQZB2YK863:APA91bF42Bznm_Me-_jO6YATxEelg0LHwbQWQv52TmWTkB_Sypcl2C_y85Di6rO__NzpcT039eEx__HaDJW0-XRH4M-TV7xbWchkuI0P_P6OHntK4RWecf4",
+  "mobile_device_platform": "android",
+  "mobile_device_id": null,
+  "latest_reminder": {
+    "id": "glYniCd0q1jxCUHCYnDC",
+    "title": "breakfast",
+    "message": "its breakfast time ",
+    "timestamp": "2026-04-26T06:36:00Z",
+    "mode": "outdoor",
+    "status": "pending"
+  },
+  "history": [
+    {
+      "id": "1Bay3UbjgVCQDySfjdHx",
+      "title": "medicine",
+      "message": "take your afternoon medicine ",
+      "timestamp": "2026-04-23T07:29:15.729000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "1Bay3UbjgVCQDySfjdHx",
+      "title": "medicine",
+      "message": "take your afternoon medicine ",
+      "timestamp": "2026-04-23T08:25:15.715000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "1Bay3UbjgVCQDySfjdHx",
+      "title": "medicine",
+      "message": "take your afternoon medicine ",
+      "timestamp": "2026-04-23T10:32:29.620000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "1Bay3UbjgVCQDySfjdHx",
+      "title": "medicine",
+      "message": "take your afternoon medicine ",
+      "timestamp": "2026-04-23T10:32:35.046000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "lflbHbwSPhfpGj4HrzpW",
+      "title": "medicine",
+      "message": "take the evening medicine ",
+      "timestamp": "2026-04-23T11:30:00.359000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "lflbHbwSPhfpGj4HrzpW",
+      "title": "medicine",
+      "message": "take the evening medicine ",
+      "timestamp": "2026-04-23T11:30:03.233000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "lflbHbwSPhfpGj4HrzpW",
+      "title": "medicine",
+      "message": "take the evening medicine ",
+      "timestamp": "2026-04-23T11:39:48.237000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "lflbHbwSPhfpGj4HrzpW",
+      "title": "medicine",
+      "message": "take the evening medicine ",
+      "timestamp": "2026-04-23T11:39:56.735000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T11:43:01.091000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T11:43:07.377000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T11:54:45.012000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T12:09:02.026000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T20:40:04.141000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-23T20:40:04.550000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-25T04:03:02.973000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-25T09:21:01.112000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-25T09:21:06.691000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "ZNZBc3IKA1Xk01b7mxbG",
+      "title": "workout ",
+      "message": "start evening workout now",
+      "timestamp": "2026-04-25T09:27:28.496000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "4DWqt6EZV3d6Vl3SqwPq",
+      "title": "food",
+      "message": "have your lunch now",
+      "timestamp": "2026-04-25T09:30:02.186000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "4DWqt6EZV3d6Vl3SqwPq",
+      "title": "food",
+      "message": "have your lunch now",
+      "timestamp": "2026-04-25T09:30:02.362000Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "bfTY64XN0gqEpnL8FcmI",
+      "title": "dinner",
+      "message": "dinner time. have your dinner now",
+      "timestamp": "2026-04-25T17:08:02.339000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "bfTY64XN0gqEpnL8FcmI",
+      "title": "dinner",
+      "message": "dinner time. have your dinner now",
+      "timestamp": "2026-04-25T17:08:08.458000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "bfTY64XN0gqEpnL8FcmI",
+      "title": "dinner",
+      "message": "dinner time. have your dinner now",
+      "timestamp": "2026-04-25T17:08:09.162000Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "bfTY64XN0gqEpnL8FcmI",
+      "title": "dinner time",
+      "message": "have your dinner now.",
+      "timestamp": "2026-04-25T20:34:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "bfTY64XN0gqEpnL8FcmI",
+      "title": "dinner time",
+      "message": "have your dinner now.",
+      "timestamp": "2026-04-25T20:34:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "glYniCd0q1jxCUHCYnDC",
+      "title": "breakfast",
+      "message": "its breakfast time ",
+      "timestamp": "2026-04-26T06:36:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "glYniCd0q1jxCUHCYnDC",
+      "title": "breakfast",
+      "message": "its breakfast time ",
+      "timestamp": "2026-04-26T06:36:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    }
+  ]
+}
