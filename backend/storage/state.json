@@ -4,18 +4,17 @@
   "auto_mode_setting": "manual",
   "mode_device_id": null,
   "mode_last_rssi": null,
-  "mode_last_update_time": "2026-04-25T20:32:33.358000+00:00",
-  "mobile_device_token": "ede4ffwIRbC7ci2nHR6kQg:APA91bFmi56dPAGtrj0ZsLLTTl1HJVHjZn9tVGbpg7TvXLd9VkrvPcjMqYblYHS7cmwALF91PZ59z24ofMuFCHB-MEFNC3gBOzVLkzgHeRNMCAet7TLoZDE",
+  "mode_last_update_time": "2026-04-28T07:54:22.014000+00:00",
+  "mobile_device_token": "e2YvIdpkQKi4QzlreQIeTg:APA91bHkEU6CP5k98VdfUmn_5TCsnEmaMkFufO_jGGPEm1w0HE4PhE4r47kuBOInh5Dnr9a9e-W6SMkPkXZubOUOjXoGd0-ADpPbYUdkn8od7z8XX6fF7PM",
   "mobile_device_platform": "android",
   "mobile_device_id": null,
   "latest_reminder": {
-    "id": "XQcUpoJPbqmi6H9a2xZU",
-    "title": "medicine",
-    "message": "take your medicine now",
-    "timestamp": "2026-04-27T21:08:00Z",
+    "id": "9IuJZGjHsXfS7dbjDk3u",
+    "title": "lunch",
+    "message": "lunch time",
+    "timestamp": "2026-04-28T08:00:00Z",
     "mode": "outdoor",
-    "status": "synced",
-    "acknowledgedBy": "android_phone"
+    "status": "pending"
   },
   "history": [
     {
@@ -386,6 +385,147 @@
       "mode": "outdoor",
       "status": "synced",
       "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "3EyOA24kXtW9l3bUte5l",
+      "title": "dinner",
+      "message": "take your dinner",
+      "timestamp": "2026-04-27T21:29:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "igmHGIe8J3Sllaka0dMY",
+      "title": "breakfast",
+      "message": "take your breakfast",
+      "timestamp": "2026-04-27T21:40:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "yruphNlDWZIU9nFrRSj5",
+      "title": "breakfast",
+      "message": "take your breakfast now",
+      "timestamp": "2026-04-28T03:00:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "zcY5Vr2xpq7mZNH9XbLg",
+      "title": "breakfast",
+      "message": "its breakfast time eat ",
+      "timestamp": "2026-04-28T03:48:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "ATvekNpXGd0DbhpeKu2e",
+      "title": "medicine",
+      "message": "its your morning medicine time ",
+      "timestamp": "2026-04-28T04:02:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "Z3DmTMzWW662FyG1pjU6",
+      "title": "medicine ",
+      "message": "its again medicine time",
+      "timestamp": "2026-04-28T04:40:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "jobZNwLEXqzeyFZt4gYv",
+      "title": "tea time",
+      "message": "its time for morning tea.",
+      "timestamp": "2026-04-28T04:54:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "NgL37BNcWQ5PasjZPnRF",
+      "title": "tea time ",
+      "message": "its tea time have some tea",
+      "timestamp": "2026-04-28T05:22:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "e1HaDhgbWJswKfG0e5pF",
+      "title": "chat time",
+      "message": "meet your friends ",
+      "timestamp": "2026-04-28T05:27:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "DWLq7SOf9BJvLGHEEhMm",
+      "title": "tea time",
+      "message": "its tea time ",
+      "timestamp": "2026-04-28T06:00:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "U2Q6v7RZlh9g2TPCsoTF",
+      "title": "chat time",
+      "message": "chat chat chat",
+      "timestamp": "2026-04-28T06:33:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "w7gq2XV7qkKaHiJbAmDd",
+      "title": "tea time",
+      "message": "tea time",
+      "timestamp": "2026-04-28T06:35:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "4CIYJTmtU5tknd2lF8SK",
+      "title": "chat time",
+      "message": "chat chat chat",
+      "timestamp": "2026-04-28T06:42:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "k1nQFmtS4zi8X2DxJJHf",
+      "title": "lunch ",
+      "message": "its lunch time ",
+      "timestamp": "2026-04-28T06:55:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "BE069UkrX59KP6cLMG6f",
+      "title": "medicine",
+      "message": "take medicine",
+      "timestamp": "2026-04-28T07:50:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "b3rlhpjFPGbqwzew2wkL",
+      "title": "lunch time",
+      "message": "have your lunch ",
+      "timestamp": "2026-04-28T07:58:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "9IuJZGjHsXfS7dbjDk3u",
+      "title": "lunch",
+      "message": "lunch time",
+      "timestamp": "2026-04-28T08:00:00Z",
+      "mode": "outdoor",
+      "status": "pending"
     }
   ]
 }

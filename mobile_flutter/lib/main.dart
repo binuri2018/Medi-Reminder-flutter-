@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:firebase_core/firebase_core.dart";
+import "package:firebase_messaging/firebase_messaging.dart";
 import "package:flutter/foundation.dart";
 import "package:android_alarm_manager_plus/android_alarm_manager_plus.dart";
 
@@ -20,6 +21,9 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Must register before any other FirebaseMessaging usage (e.g. getToken,
+  // requestPermission) or terminated-state delivery breaks on Android.
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   await AndroidAlarmManager.initialize();
   await OutdoorAlarmService.initialize();
   await FcmService.initialize(api: ApiService());

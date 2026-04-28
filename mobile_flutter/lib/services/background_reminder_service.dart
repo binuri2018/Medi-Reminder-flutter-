@@ -117,7 +117,10 @@ class BackgroundReminderService {
         "WorkManager sync fetched history: count=${history.length}",
       );
     }
-    await OutdoorAlarmService.syncFromHistory(history);
+    await OutdoorAlarmService.syncFromHistory(
+      history,
+      headlessWorker: true,
+    );
   }
 
   /// Falls back to the original /latest behaviour when /history is
@@ -143,7 +146,10 @@ class BackgroundReminderService {
       mode: latest["mode"]?.toString() ?? "outdoor",
       status: status,
     );
-    await OutdoorAlarmService.syncReminder(reminder);
+    await OutdoorAlarmService.syncReminder(
+      reminder,
+      headlessNotificationSetup: true,
+    );
   }
 
   static Future<String?> _safeGetMode() async {

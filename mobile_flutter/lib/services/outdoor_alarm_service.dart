@@ -1,9 +1,11 @@
 import "dart:async";
 import "dart:convert";
+import "dart:developer" as dev;
 import "dart:ui";
 
 import "package:android_alarm_manager_plus/android_alarm_manager_plus.dart";
 import "package:flutter/foundation.dart";
+import "package:flutter/services.dart";
 import "package:flutter_local_notifications/flutter_local_notifications.dart";
 import "package:flutter_tts/flutter_tts.dart";
 import "package:http/http.dart" as http;
@@ -14,6 +16,9 @@ import "package:timezone/timezone.dart" as tz;
 
 import "../config/api_config.dart";
 import "../models/reminder_model.dart";
+
+const MethodChannel _kExactAlarmChannel =
+    MethodChannel("com.example.mobile_flutter/exact_alarm");
 
 // IMPORTANT: The channel id is versioned because Android caches the
 // importance/sound/vibration settings of a channel forever after first
@@ -45,9 +50,8 @@ const List<String> _legacyAlarmChannelIds = <String>[
 /// Sized to absorb the worst-case end-to-end "fire now" latency without
 /// dropping a real reminder:
 ///   * backend dispatcher loop interval (5s)
-///   * mobile FCM is disabled in this build (no Firebase service account),
-///     so reminders ride the polling channel
-///   * mobile polling interval (~30s)
+///   * FCM data push (primary) plus history/WorkManager backup
+///   * clock skew and transport delay
 ///   * WorkManager safety-net interval (15min)
 ///   * a couple of human-scale buffer seconds
 /// 5 minutes is the sweet spot: long enough for legitimate "fire now"
@@ -70,6 +74,16 @@ const String _locallyAckedRemindersPref =
     "locally_acknowledged_outdoor_reminders";
 const String _doneActionId = "outdoor_reminder_done_action";
 
+/// [alarmClock] requires SCHEDULE_EXACT_ALARM. Many devices never show that
+/// special access until requested; without it both zonedSchedule attempts
+/// used to fail and **no** notification was ever scheduled.
+const List<AndroidScheduleMode> _androidZonedScheduleFallbacks =
+    <AndroidScheduleMode>[
+  AndroidScheduleMode.alarmClock,
+  AndroidScheduleMode.exactAllowWhileIdle,
+  AndroidScheduleMode.inexactAllowWhileIdle,
+];
+
 /// Fired by AndroidAlarmManager at the exact reminder time. Speaks the
 /// reminder text via TTS even if the app is killed.
 @pragma("vm:entry-point")
@@ -89,6 +103,11 @@ Future<void> outdoorVoiceAlarmCallback(
   final reminderId = (params["reminderId"] ?? "").toString();
   final voiceText = (params["voiceText"] ?? "").toString();
   final firedAt = DateTime.now().toLocal();
+  dev.log(
+    "notification fired reminderId=$reminderId notifId=$reminderIntId "
+    "immediate=false voiceAlarm=true at=$firedAt",
+    name: "OutdoorAlarm",
+  );
   if (kDebugMode) {
     debugPrint("alarm fired timestamp=$firedAt id=$reminderId notifId=$reminderIntId");
   }
@@ -152,6 +171,61 @@ class OutdoorAlarmService {
       ValueNotifier<ReminderModel?>(null);
 
   static bool _initialized = false;
+
+  /// Per-isolate: FCM / WorkManager isolates must not run [initialize]'s
+  /// channel wipe or launch-details path — that can cancel pending alarms
+  /// or fail headlessly and leave notifications uninitialized.
+  static bool _headlessNotificationsReady = false;
+
+  /// Minimal plugin + channel setup for secondary isolates (FCM background,
+  /// WorkManager). Does not delete notification channels or touch launch
+  /// details.
+  static Future<void> initializeForHeadlessDelivery() async {
+    if (_headlessNotificationsReady) return;
+    tz.initializeTimeZones();
+
+    const initSettings = InitializationSettings(
+      android: AndroidInitializationSettings("@mipmap/ic_launcher"),
+    );
+    await _notifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onForegroundNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          outdoorNotificationBackgroundResponseHandler,
+    );
+
+    const channel = AndroidNotificationChannel(
+      _alarmChannelId,
+      _alarmChannelName,
+      description: _alarmChannelDescription,
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+      sound: RawResourceAndroidNotificationSound("reminder_alarm"),
+    );
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    try {
+      await androidPlugin?.createNotificationChannel(channel);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          "headless alarm channel create with custom sound failed, fallback: $e",
+        );
+      }
+      const fallbackChannel = AndroidNotificationChannel(
+        _alarmChannelId,
+        _alarmChannelName,
+        description: _alarmChannelDescription,
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      );
+      await androidPlugin?.createNotificationChannel(fallbackChannel);
+    }
+
+    _headlessNotificationsReady = true;
+  }
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -224,21 +298,55 @@ class OutdoorAlarmService {
       await androidPlugin?.createNotificationChannel(fallbackChannel);
     }
 
-    // Cold-start path: if the app was launched by a notification tap while
-    // killed, surface the reminder right away.
-    final launchDetails = await _notifications.getNotificationAppLaunchDetails();
-    if (launchDetails?.didNotificationLaunchApp == true) {
-      final response = launchDetails!.notificationResponse;
-      if (response != null) {
-        await handleNotificationResponse(response, runningInBackground: false);
+    // Cold-start path: main isolate only. Must not break init if APIs misbehave
+    // in a headless context (they should not run here).
+    try {
+      final launchDetails =
+          await _notifications.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        final response = launchDetails!.notificationResponse;
+        if (response != null) {
+          await handleNotificationResponse(response, runningInBackground: false);
+        }
+      } else {
+        await _restorePendingTapFromPrefs();
       }
-    } else {
-      // If a previous run wrote a tap into prefs (e.g. background isolate
-      // restored data) but the UI hadn't been alive yet, recover it.
-      await _restorePendingTapFromPrefs();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint("notification launch details / tap restore skipped: $e");
+      }
     }
 
     _initialized = true;
+  }
+
+  /// Opens the per-app "Alarms & reminders" screen (Android 12+). Uses
+  /// [FLAG_ACTIVITY_NEW_TASK] from the Activity for OEMs where
+  /// permission_handler's forResult path never lists the app.
+  static Future<void> _openAndroidExactAlarmSettings() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _kExactAlarmChannel.invokeMethod<void>("openExactAlarmSettings");
+    } catch (e, st) {
+      dev.log(
+        "openExactAlarmSettings failed: $e",
+        name: "OutdoorAlarm",
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  /// Sends the user straight to this app's **Alarms & reminders** toggle
+  /// (Android 12+). Use when Settings → Special app access is hard to find.
+  /// No-op on non-Android. Reminders still work without this via inexact
+  /// scheduling, but timing is less precise.
+  static Future<void> openExactAlarmPermissionSettings() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await Permission.scheduleExactAlarm.request();
+    } catch (_) {}
+    await _openAndroidExactAlarmSettings();
   }
 
   static Future<void> ensurePermissions() async {
@@ -254,9 +362,28 @@ class OutdoorAlarmService {
     }
 
     try {
-      final exactStatus = await Permission.scheduleExactAlarm.request();
+      // SCHEDULE_EXACT_ALARM only (see AndroidManifest). permission_handler
+      // uses startActivityForResult; some Samsung builds still omit the app
+      // from "Alarms & reminders" until the package-scoped intent runs from
+      // the Activity — see [_openAndroidExactAlarmSettings].
+      var exactStatus = await Permission.scheduleExactAlarm.status;
+      if (!exactStatus.isGranted) {
+        exactStatus = await Permission.scheduleExactAlarm.request();
+      }
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          !exactStatus.isGranted) {
+        await _openAndroidExactAlarmSettings();
+      }
+      exactStatus = await Permission.scheduleExactAlarm.status;
       if (kDebugMode) {
         debugPrint("alarm permission exact alarm status: $exactStatus");
+      }
+      if (!exactStatus.isGranted) {
+        dev.log(
+          "exact alarm not granted: use the system screen to allow this app, "
+          "or Settings → Apps → Special app access → Alarms & reminders",
+          name: "OutdoorAlarm",
+        );
       }
     } catch (e) {
       if (kDebugMode) {
@@ -301,6 +428,20 @@ class OutdoorAlarmService {
     }
   }
 
+  /// Whether the latest reminder should trigger foreground handling now.
+  ///
+  /// Unlike [shouldPlayInAppVoice], this ignores the stale window so the app
+  /// can still post a foreground notification for a due reminder even when the
+  /// backend timestamp arrives late (clock skew / transport lag).
+  static bool shouldAlertLatestInForeground(ReminderModel reminder) {
+    if (reminder.id.isEmpty) return false;
+    if (!isReminderPending(reminder.status)) return false;
+    if (reminder.mode.trim().toLowerCase() != "outdoor") return false;
+    final due = DateTime.tryParse(reminder.timestamp);
+    if (due == null) return false;
+    return !due.toUtc().isAfter(DateTime.now().toUtc());
+  }
+
   /// Whether the reminder is in the same time window where [syncReminder]
   /// would fire the heads-up notification immediately (due now or within
   /// [_pastDueTolerance], not stale). HomeScreen uses this so in-app TTS
@@ -322,13 +463,48 @@ class OutdoorAlarmService {
     return !dueUtc.isAfter(nowUtc);
   }
 
+  /// Foreground fallback: if latest pending reminder is already due, post the
+  /// notification right away even when history scheduling marked it stale.
+  static Future<void> postForegroundDueNotification(ReminderModel reminder) async {
+    if (!shouldAlertLatestInForeground(reminder)) return;
+    final acked = await _loadLocallyAckedSet();
+    if (acked.contains(reminder.id)) return;
+
+    await initialize();
+    final payload = jsonEncode(_reminderToMap(reminder));
+    await _persistReminderPayload(reminder);
+    await _showImmediateNotification(
+      reminderId: reminder.id,
+      reminderIntId: _idForReminder(reminder.id),
+      title: _notificationTitleFor(reminder),
+      body: _notificationBodyFor(
+        reminder,
+        dueLocal: DateTime.tryParse(reminder.timestamp)?.toLocal(),
+      ),
+      payload: payload,
+    );
+  }
+
   /// Schedules (or replaces) all alarms/notifications for `reminder`.
   /// Idempotent for a given `reminder.id` because every persistent ID is
   /// derived from the reminder ID and we dedupe on `(id, timestamp)` via
   /// SharedPreferences so polling/FCM/WorkManager cannot re-fire the same
   /// reminder repeatedly.
-  static Future<void> syncReminder(ReminderModel reminder) async {
-    await initialize();
+  static Future<void> syncReminder(
+    ReminderModel reminder, {
+    bool headlessNotificationSetup = false,
+    bool allowStaleImmediate = false,
+    // When true, skip posting our own local immediate-notification (the
+    // OS-level FCM `notification` block already pops the notification on
+    // background/killed states; doing it twice would create duplicates).
+    // The voice/TTS callback and state persistence still run.
+    bool suppressLocalNotification = false,
+  }) async {
+    if (headlessNotificationSetup) {
+      await initializeForHeadlessDelivery();
+    } else {
+      await initialize();
+    }
     // NOTE: ensurePermissions() is intentionally NOT called here. It used to
     // be, which caused an N-way race in package:permission_handler when
     // syncFromHistory processed multiple reminders in parallel - every call
@@ -478,6 +654,37 @@ class OutdoorAlarmService {
     final futureDelta = dueUtc.difference(nowUtc);
     if (futureDelta.isNegative &&
         futureDelta.abs() > _pastDueTolerance) {
+      if (allowStaleImmediate) {
+        if (kDebugMode) {
+          debugPrint(
+            "syncReminder stale override -> fire immediate: id=${reminder.id} "
+            "ageSec=${futureDelta.abs().inSeconds} tolerance=${_pastDueTolerance.inSeconds}s "
+            "suppressLocalNotification=$suppressLocalNotification",
+          );
+        }
+        if (!suppressLocalNotification) {
+          await _showImmediateNotification(
+            reminderId: reminder.id,
+            reminderIntId: reminderIntId,
+            title: notifTitle,
+            body: notifBody,
+            payload: payload,
+          );
+        }
+        try {
+          unawaited(
+            outdoorVoiceAlarmCallback(
+              _voiceAlarmIdForReminder(reminder.id),
+              <String, dynamic>{
+                "reminderId": reminder.id,
+                "voiceText": voiceText,
+              },
+            ),
+          );
+        } catch (_) {}
+        await _markScheduled(reminder.id, reminder.timestamp);
+        return;
+      }
       // Stale (more than _pastDueTolerance in the past). Do NOT pop a
       // notification on app open / poll cycle - the user already missed the
       // event, and they can find it in history. We still mark it as handled
@@ -504,15 +711,19 @@ class OutdoorAlarmService {
         debugPrint(
           "syncReminder firing immediately: id=${reminder.id} "
           "dueLocal=${dueUtc.toLocal()} nowLocal=${nowUtc.toLocal()} "
-          "pastSec=${futureDelta.abs().inSeconds}",
+          "pastSec=${futureDelta.abs().inSeconds} "
+          "suppressLocalNotification=$suppressLocalNotification",
         );
       }
-      await _showImmediateNotification(
-        reminderIntId: reminderIntId,
-        title: notifTitle,
-        body: notifBody,
-        payload: payload,
-      );
+      if (!suppressLocalNotification) {
+        await _showImmediateNotification(
+          reminderId: reminder.id,
+          reminderIntId: reminderIntId,
+          title: notifTitle,
+          body: notifBody,
+          payload: payload,
+        );
+      }
       try {
         unawaited(
           outdoorVoiceAlarmCallback(
@@ -539,6 +750,7 @@ class OutdoorAlarmService {
         );
       }
       await _scheduleZonedNotification(
+        reminderId: reminder.id,
         reminderIntId: reminderIntId,
         title: notifTitle,
         body: notifBody,
@@ -554,22 +766,59 @@ class OutdoorAlarmService {
         // so the cost in the main isolate is just a method-channel
         // round-trip.
         await AndroidAlarmManager.initialize();
-        await AndroidAlarmManager.oneShotAt(
+        final voiceId = _voiceAlarmIdForReminder(reminder.id);
+        final voiceParams = <String, dynamic>{
+          "reminderId": reminder.id,
+          "voiceText": voiceText,
+        };
+        var voiceOk = await AndroidAlarmManager.oneShotAt(
           dueUtc.toLocal(),
-          _voiceAlarmIdForReminder(reminder.id),
+          voiceId,
           outdoorVoiceAlarmCallback,
           exact: true,
           wakeup: true,
           allowWhileIdle: true,
           rescheduleOnReboot: true,
-          params: {
-            "reminderId": reminder.id,
-            "voiceText": voiceText,
-          },
+          params: voiceParams,
         );
+        if (voiceOk != true) {
+          voiceOk = await AndroidAlarmManager.oneShotAt(
+            dueUtc.toLocal(),
+            voiceId,
+            outdoorVoiceAlarmCallback,
+            exact: false,
+            wakeup: true,
+            allowWhileIdle: true,
+            rescheduleOnReboot: true,
+            params: voiceParams,
+          );
+        }
+        if (kDebugMode && voiceOk != true) {
+          debugPrint(
+            "AndroidAlarmManager.oneShotAt inexact fallback also failed id=${reminder.id}",
+          );
+        }
       } catch (e) {
         if (kDebugMode) {
           debugPrint("AndroidAlarmManager.oneShotAt failed: $e");
+        }
+        try {
+          await AndroidAlarmManager.initialize();
+          await AndroidAlarmManager.oneShotAt(
+            dueUtc.toLocal(),
+            _voiceAlarmIdForReminder(reminder.id),
+            outdoorVoiceAlarmCallback,
+            exact: false,
+            wakeup: true,
+            allowWhileIdle: true,
+            rescheduleOnReboot: true,
+            params: {
+              "reminderId": reminder.id,
+              "voiceText": voiceText,
+            },
+          );
+        } catch (_) {
+          // Voice alarm is optional if notification still fires.
         }
       }
     }
@@ -584,6 +833,7 @@ class OutdoorAlarmService {
   }
 
   static Future<void> _scheduleZonedNotification({
+    required String reminderId,
     required int reminderIntId,
     required String title,
     required String body,
@@ -596,58 +846,61 @@ class OutdoorAlarmService {
         "title='$title' body='$body' dueLocal=${dueUtc.toLocal()}",
       );
     }
-    try {
-      await _notifications.zonedSchedule(
-        reminderIntId,
-        title,
-        body,
-        tz.TZDateTime.from(dueUtc, tz.UTC),
-        _buildNotificationDetails(withCustomSound: true),
-        uiLocalNotificationDateInterpretation:
-            UILocalNotificationDateInterpretation.absoluteTime,
-        // alarmClock => AlarmManager.setAlarmClock: OS treats this as a
-        // user-visible alarm, shows in status bar, and delivers much closer
-        // to the requested wall time than exactAllowWhileIdle on Samsung etc.
-        androidScheduleMode: AndroidScheduleMode.alarmClock,
-        payload: payload,
+    final scheduled = tz.TZDateTime.from(dueUtc, tz.UTC);
+    for (final withCustomSound in <bool>[true, false]) {
+      final details = _buildNotificationDetails(
+        withCustomSound: withCustomSound,
       );
-      if (kDebugMode) {
-        debugPrint(
-          "_scheduleZonedNotification scheduled successfully: notifId=$reminderIntId withCustomSound=true",
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint("zonedSchedule with custom sound failed, fallback default: $e");
-      }
-      try {
-        await _notifications.zonedSchedule(
-          reminderIntId,
-          title,
-          body,
-          tz.TZDateTime.from(dueUtc, tz.UTC),
-          _buildNotificationDetails(withCustomSound: false),
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-          androidScheduleMode: AndroidScheduleMode.alarmClock,
-          payload: payload,
-        );
-        if (kDebugMode) {
-          debugPrint(
-            "_scheduleZonedNotification scheduled successfully: notifId=$reminderIntId withCustomSound=false",
+      for (final mode in _androidZonedScheduleFallbacks) {
+        try {
+          await _notifications.zonedSchedule(
+            reminderIntId,
+            title,
+            body,
+            scheduled,
+            details,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            androidScheduleMode: mode,
+            payload: payload,
           );
-        }
-      } catch (e2) {
-        if (kDebugMode) {
-          debugPrint(
-            "_scheduleZonedNotification fallback also failed: notifId=$reminderIntId err=$e2",
+          dev.log(
+            "local alarm scheduled reminderId=$reminderId dueUtc=$dueUtc "
+            "notifId=$reminderIntId withCustomSound=$withCustomSound mode=$mode",
+            name: "OutdoorAlarm",
           );
+          if (kDebugMode) {
+            debugPrint(
+              "_scheduleZonedNotification ok: notifId=$reminderIntId "
+              "sound=$withCustomSound mode=$mode",
+            );
+          }
+          return;
+        } catch (e, st) {
+          dev.log(
+            "zonedSchedule failed sound=$withCustomSound mode=$mode: $e",
+            name: "OutdoorAlarm",
+            error: e,
+            stackTrace: st,
+          );
+          if (kDebugMode) {
+            debugPrint(
+              "zonedSchedule failed notifId=$reminderIntId sound=$withCustomSound "
+              "mode=$mode err=$e",
+            );
+          }
         }
       }
+    }
+    if (kDebugMode) {
+      debugPrint(
+        "_scheduleZonedNotification exhausted all modes: notifId=$reminderIntId",
+      );
     }
   }
 
   static Future<void> _showImmediateNotification({
+    required String reminderId,
     required int reminderIntId,
     required String title,
     required String body,
@@ -658,50 +911,62 @@ class OutdoorAlarmService {
         "_showImmediateNotification posting: notifId=$reminderIntId title='$title' body='$body'",
       );
     }
-    try {
-      await _notifications.show(
-        reminderIntId,
-        title,
-        body,
-        _buildNotificationDetails(withCustomSound: true),
-        payload: payload,
-      );
-      if (kDebugMode) {
-        debugPrint(
-          "_showImmediateNotification posted successfully: notifId=$reminderIntId withCustomSound=true",
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint("immediate show with custom sound failed, fallback default: $e");
-      }
+    Future<bool> tryShow({
+      required bool withCustomSound,
+      required bool useFullScreenIntent,
+    }) async {
       try {
         await _notifications.show(
           reminderIntId,
           title,
           body,
-          _buildNotificationDetails(withCustomSound: false),
+          _buildNotificationDetails(
+            withCustomSound: withCustomSound,
+            useFullScreenIntent: useFullScreenIntent,
+          ),
           payload: payload,
+        );
+        dev.log(
+          "notification fired reminderId=$reminderId notifId=$reminderIntId "
+          "immediate=true withCustomSound=$withCustomSound fullScreen=$useFullScreenIntent",
+          name: "OutdoorAlarm",
         );
         if (kDebugMode) {
           debugPrint(
-            "_showImmediateNotification posted successfully: notifId=$reminderIntId withCustomSound=false",
+            "_showImmediateNotification posted: notifId=$reminderIntId "
+            "sound=$withCustomSound fullScreen=$useFullScreenIntent",
           );
         }
-      } catch (e2) {
-        // Last-ditch: if even the default-sound channel post fails, log
-        // loudly so the user can see what's happening on the device.
+        return true;
+      } catch (e, st) {
+        dev.log(
+          "immediate show failed sound=$withCustomSound fullScreen=$useFullScreenIntent: $e",
+          name: "OutdoorAlarm",
+          error: e,
+          stackTrace: st,
+        );
         if (kDebugMode) {
-          debugPrint(
-            "_showImmediateNotification fallback also failed: notifId=$reminderIntId err=$e2",
-          );
+          debugPrint("_showImmediateNotification try failed: $e");
         }
+        return false;
       }
     }
+
+    if (await tryShow(withCustomSound: true, useFullScreenIntent: true)) {
+      return;
+    }
+    if (await tryShow(withCustomSound: true, useFullScreenIntent: false)) {
+      return;
+    }
+    if (await tryShow(withCustomSound: false, useFullScreenIntent: true)) {
+      return;
+    }
+    await tryShow(withCustomSound: false, useFullScreenIntent: false);
   }
 
   static NotificationDetails _buildNotificationDetails({
     required bool withCustomSound,
+    bool useFullScreenIntent = true,
   }) {
     final actions = <AndroidNotificationAction>[
       const AndroidNotificationAction(
@@ -724,11 +989,10 @@ class OutdoorAlarmService {
           : null,
       category: AndroidNotificationCategory.alarm,
       ticker: "Outdoor alarm fired",
-      // Lock-screen visible heads-up. `fullScreenIntent: true` plus the
-      // `USE_FULL_SCREEN_INTENT` permission in AndroidManifest.xml is what
-      // forces the system to wake the screen and pop a heads-up bubble
-      // even when the app is in the foreground.
-      fullScreenIntent: true,
+      // Lock-screen visible heads-up. On Android 14+ full-screen may be
+      // downgraded or rejected for some apps; retries use false so the
+      // notification still posts.
+      fullScreenIntent: useFullScreenIntent,
       visibility: NotificationVisibility.public,
       // Vibration pattern (ms): wait, vibrate, wait, vibrate, ...
       // Must be set at post time too because some OEMs ignore the
@@ -759,8 +1023,15 @@ class OutdoorAlarmService {
   /// history list. Anything pending+outdoor gets (re)scheduled, everything
   /// else (acknowledged/done/indoor/missing) gets cancelled so a stale
   /// alarm cannot survive on the device.
-  static Future<void> syncFromHistory(List<ReminderModel> reminders) async {
-    await initialize();
+  static Future<void> syncFromHistory(
+    List<ReminderModel> reminders, {
+    bool headlessWorker = false,
+  }) async {
+    if (headlessWorker) {
+      await initializeForHeadlessDelivery();
+    } else {
+      await initialize();
+    }
 
     // Dedupe input by id, keeping the entry with the latest timestamp.
     // The backend's /api/reminders/history endpoint can return multiple
@@ -810,7 +1081,6 @@ class OutdoorAlarmService {
           final scheduledMap = await _loadScheduledMap();
           if (scheduledMap[reminder.id] == reminder.timestamp) {
             alreadyHandledSkipped += 1;
-            continue;
           }
           final due = DateTime.tryParse(reminder.timestamp);
           if (due != null) {
@@ -824,7 +1094,10 @@ class OutdoorAlarmService {
             }
           }
         }
-        await syncReminder(reminder);
+        await syncReminder(
+          reminder,
+          headlessNotificationSetup: headlessWorker,
+        );
       } else if (mode != "outdoor") {
         nonOutdoorCancelled += 1;
         await cancelReminder(reminder.id);

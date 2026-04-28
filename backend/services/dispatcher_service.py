@@ -25,8 +25,13 @@ class DispatcherService:
             mode=mode,
             status="pending",
         )
+        dumped = payload.model_dump(mode="json")
+        # Always persist to history + latest. Previously this only ran in outdoor
+        # mode, so a reminder created while the sim was "indoor" never appeared in
+        # /api/reminders/history — the Flutter app never saw it and could not
+        # schedule a second notification. FCM remains outdoor-only below.
+        self._store.set_latest_reminder(dumped)
         if mode == ModeEnum.outdoor:
-            self._store.set_latest_reminder(payload.model_dump(mode="json"))
             token = self._store.get_mobile_device_token()
             sent = self._fcm_service.send_outdoor_reminder(token=token or "", reminder=payload)
             if sent:

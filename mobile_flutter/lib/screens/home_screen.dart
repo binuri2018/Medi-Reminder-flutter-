@@ -56,6 +56,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   DateTime? _lastCoreRefresh;
   DateTime? _lastHistoryRefresh;
   String? _lastAlertKey;
+  /// Fingerprint of the last history list we fed into [OutdoorAlarmService.syncFromHistory].
+  /// Used so silent polls still reconcile alarms when the list changes in ways the UI
+  /// `shouldUpdate` heuristic used to miss, without re-running sync on every tick when
+  /// nothing changed.
+  String? _lastHistoryAlarmSyncKey;
 
   // Voice command pipeline state. `_speechActive` makes the listener
   // single-shot per alert, while `_speechInitTried` avoids re-initializing the
@@ -211,6 +216,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final alertKey = "${reminder.id}-${reminder.timestamp}-${reminder.status}";
     if (!force && _lastAlertKey == alertKey) return;
     _lastAlertKey = alertKey;
+
+    // Foreground notification fallback: keeps popup behavior alive even when
+    // history scheduling skipped a due reminder as stale.
+    await OutdoorAlarmService.postForegroundDueNotification(reminder);
+    if (!OutdoorAlarmService.shouldPlayInAppVoice(reminder)) {
+      return;
+    }
 
     try {
       if (await Vibration.hasVibrator()) {
@@ -471,23 +483,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       if (!mounted) return;
 
-      // Register exact local alarms from the server's "latest" reminder on
-      // every core poll (5s). Previously only `refreshHistory` (30s) called
-      // `syncFromHistory`, so a new future reminder could sit unscheduled for
-      // tens of seconds — the system notification then fired noticeably late
-      // vs the time the user picked. `syncReminder` is idempotent.
+      // Exact-time scheduling is driven by FCM data messages (see
+      // [FcmService.syncReminderFromMessage]). Core poll mirrors UI state and
+      // adds a foreground fallback so a due latest reminder still pops even if
+      // history scheduling marked it stale or was delayed. History sync +
+      // WorkManager remain the backup schedulers.
       if (modeState.mode.trim().toLowerCase() == "outdoor" &&
           latest != null &&
-          isReminderPending(latest.status)) {
-        // Await scheduling only. Never await [_triggerOutdoorAlert]: a single
-        // TTS utterance can take 10–20s and held [_coreRefreshInFlight] the
-        // whole time, starving the 5s poll so the next [syncReminder] was
-        // late — the system popup looked "delayed" and sometimes never
-        // registered. TTS is fire-and-forget.
-        await OutdoorAlarmService.syncReminder(latest);
-        if (OutdoorAlarmService.shouldPlayInAppVoice(latest)) {
-          unawaited(_triggerOutdoorAlert(latest));
-        }
+          isReminderPending(latest.status) &&
+          OutdoorAlarmService.shouldAlertLatestInForeground(latest)) {
+        unawaited(_triggerOutdoorAlert(latest));
       }
 
       final shouldUpdate = _mode != modeState.mode ||
@@ -672,6 +677,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  static String _historyAlarmSyncKey(List<ReminderModel> list) {
+    if (list.isEmpty) return "";
+    return list
+        .map(
+          (r) =>
+              "${r.id}|${r.timestamp}|${r.status}|${r.mode.trim().toLowerCase()}",
+        )
+        .join(";");
+  }
+
   /// [getHistory] only.
   Future<void> _refreshHistory({bool silent = false, bool force = false}) async {
     final now = DateTime.now();
@@ -698,13 +713,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           (_history.isNotEmpty &&
               history.isNotEmpty &&
               (_history.first.id != history.first.id ||
-                  _history.first.status != history.first.status)) ||
+                  _history.first.status != history.first.status ||
+                  _history.first.timestamp != history.first.timestamp)) ||
           (_history.isEmpty && history.isNotEmpty);
-      if (!shouldUpdate && silent) return;
-      setState(() {
-        _history = history;
-      });
-      await OutdoorAlarmService.syncFromHistory(history);
+      if (shouldUpdate || !silent) {
+        setState(() {
+          _history = history;
+        });
+      }
+      final alarmSyncKey = _historyAlarmSyncKey(history);
+      if (force || alarmSyncKey != _lastHistoryAlarmSyncKey) {
+        await OutdoorAlarmService.syncFromHistory(history);
+        _lastHistoryAlarmSyncKey = alarmSyncKey;
+      }
       if (kDebugMode) {
         debugPrint("reminder synced from history: count=${history.length}");
       }
@@ -776,6 +797,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                     actions: [
+                      if (!kIsWeb &&
+                          defaultTargetPlatform == TargetPlatform.android)
+                        IconButton.filledTonal(
+                          onPressed: () async {
+                            await OutdoorAlarmService
+                                .openExactAlarmPermissionSettings();
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  "Turn on Alarms & reminders for this app, "
+                                  "then use the back button to return.",
+                                ),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.alarm_on_outlined),
+                          tooltip: "Exact alarms (on-time reminders)",
+                        ),
                       IconButton.filledTonal(
                         onPressed: () async {
                           await _refreshCore(force: true);
