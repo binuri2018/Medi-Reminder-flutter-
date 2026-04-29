@@ -58,50 +58,33 @@ class FcmService:
             return False
         assert self._messaging is not None
         try:
-            # Hybrid payload: notification + data, both high priority.
+            # Data-only high-priority push.
             #
-            # Why hybrid:
-            #  - Data-only used to be the only payload, but on aggressive OEMs
-            #    (Samsung One UI "Sleeping apps", Xiaomi MIUI background limits,
-            #    etc.) the data-only background handler can be silently delayed
-            #    or skipped when the app is closed, which is the exact symptom
-            #    users were hitting (no popup unless app is open).
-            #  - With a `notification` block, Android itself shows the popup
-            #    when the app is in background or killed, regardless of OEM
-            #    background restrictions.
+            # We deliberately do NOT send a `notification:` block. The Flutter
+            # client runs a persistent foreground service
+            # (OutdoorReminderForegroundService) that keeps the app process
+            # alive across all states (foreground / background / swiped from
+            # recents), so the Dart `firebaseMessagingBackgroundHandler` is
+            # guaranteed to run for every push. That handler renders the real
+            # reminder notification locally via OutdoorAlarmService, which is
+            # the only path that carries the "Done" action button, the
+            # full-screen alarm intent and the custom alarm sound.
             #
-            # Foreground behavior is preserved:
-            #  - When the app is in foreground, FCM does NOT auto-display the
-            #    notification block; only the Dart `onMessage` listener fires,
-            #    which routes through `syncReminder` and posts our local
-            #    notification (with the Done action + custom alarm sound).
-            #  - We add a `tag` so Android dedupes if both system and local
-            #    fire on the same device for the same reminder id.
-            #
-            # The Done action and custom sound stay attached to the local
-            # notification (foreground path). For background/killed the user
-            # at least gets a reliable system popup; tapping it opens the app.
-            # `channel_id` makes Android use the local channel
-            # (`outdoor_alarm_channel_v3`) which carries our custom alarm sound
-            # and Importance.max. `tag = reminder.id` lets the system replace
-            # an existing system notification for the same reminder instead of
-            # stacking duplicates.
-            android_notification = self._messaging.AndroidNotification(
-                channel_id="outdoor_alarm_channel_v3",
-                priority="max",
-                visibility="public",
-                tag=reminder.id,
-                click_action="FLUTTER_NOTIFICATION_CLICK",
-            )
+            # Sending a `notification` block alongside the data was attempted
+            # earlier and produced two regressions on Samsung One UI:
+            #   1. The OS auto-displayed a bare notification with NO Done
+            #      action — the user could not acknowledge from the popup,
+            #      because the FCM-side notification has no actions wired up.
+            #   2. After the first heads-up, Samsung's adaptive HUN throttle
+            #      silenced subsequent system-displayed notifications, so
+            #      reminders #2, #3, ... never popped while the app was
+            #      closed.
+            # The foreground service removes the need for that fallback and
+            # gives us a single, predictable display path.
             message = self._messaging.Message(
                 token=token,
                 android=self._messaging.AndroidConfig(
                     priority="high",
-                    notification=android_notification,
-                ),
-                notification=self._messaging.Notification(
-                    title=reminder.title,
-                    body=reminder.message or "Please check your reminder now.",
                 ),
                 data={
                     "reminderId": reminder.id,

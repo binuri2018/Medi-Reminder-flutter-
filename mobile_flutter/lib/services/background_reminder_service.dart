@@ -40,10 +40,8 @@ void callbackDispatcher() {
 class BackgroundReminderService {
   /// Periodic frequency of the WorkManager safety net. Android enforces a
   /// 15-minute floor for periodic tasks, so anything tighter is silently
-  /// rounded up. This is the only mechanism keeping the phone in sync with
-  /// the backend while the app is fully closed (FCM is disabled in this
-  /// build), so 15 minutes is also our worst-case detection latency for a
-  /// brand-new reminder created via the web UI.
+  /// rounded up. This backs up discovery when push is delayed by Doze/OEM so
+  /// pending+outdoor reminders still converge via /history scheduling.
   static const Duration _frequency = Duration(minutes: 15);
 
   static Future<void> initialize() async {

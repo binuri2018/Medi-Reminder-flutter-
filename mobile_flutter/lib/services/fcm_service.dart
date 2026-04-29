@@ -149,17 +149,14 @@ class FcmService {
         mode: mode.toString(),
         status: status.toString(),
       );
-      // Detect hybrid (notification + data) FCM payload. When present in
-      // background/terminated state Android already pops the system
-      // notification automatically (the user's "no popup when app is closed"
-      // bug). Suppress our local notification in that path so the user does
-      // not see two notifications stacked. Voice TTS still fires.
-      final hasSystemNotificationPayload =
-          message.notification != null &&
-              ((message.notification?.title ?? "").isNotEmpty ||
-                  (message.notification?.body ?? "").isNotEmpty);
-      final suppressLocalNotification =
-          source == "background" && hasSystemNotificationPayload;
+      // Always run the full local-notification path (with Done action +
+      // custom sound) regardless of whether the FCM payload also carried a
+      // `notification` block. We learned the hard way that Samsung One UI
+      // throttles the OS-level auto-display after the first heads-up, so we
+      // need the local notification as a guaranteed second path. Our local
+      // notif uses a stable id derived from reminder.id, so even if both
+      // fire the user sees a single deduped notification per reminder in
+      // practice (different cosmetic but same semantic event).
       await OutdoorAlarmService.syncReminder(
         reminder,
         headlessNotificationSetup: source == "background",
@@ -167,7 +164,6 @@ class FcmService {
         // For push-originated single reminders, prefer a late popup over
         // silently dropping as stale.
         allowStaleImmediate: source == "background",
-        suppressLocalNotification: suppressLocalNotification,
       );
       if (dueIsFuture) {
         dev.log(

@@ -1318,13 +1318,37 @@ class OutdoorAlarmService {
     await handleNotificationResponse(response, runningInBackground: false);
   }
 
+  /// Resolves the reminder associated with [response]. Prefer the serialized
+  /// payload; some OEM skins strip extras on notification-action taps — in
+  /// that case we recover using [NotificationResponse.id] (the Android posting
+  /// id equals [_idForReminder]) and [_loadPayloadMap].
+  static Future<ReminderModel?> _reminderFromNotificationResponse(
+    NotificationResponse response,
+  ) async {
+    final direct = _decodeReminderPayload(response.payload);
+    if (direct != null && direct.id.isNotEmpty) return direct;
+
+    final nid = response.id;
+    if (nid == null) return null;
+    try {
+      final map = await _loadPayloadMap();
+      for (final entry in map.entries) {
+        if (_idForReminder(entry.key) == nid) {
+          final r = _decodeReminderPayload(entry.value);
+          if (r != null && r.id.isNotEmpty) return r;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Top-level entrypoint for both isolates. Routing logic lives here so
   /// the foreground and background paths behave identically.
   static Future<void> handleNotificationResponse(
     NotificationResponse response, {
     required bool runningInBackground,
   }) async {
-    final reminder = _decodeReminderPayload(response.payload);
+    final reminder = await _reminderFromNotificationResponse(response);
     if (kDebugMode) {
       debugPrint(
         "notification tap callback fired: actionId=${response.actionId} "

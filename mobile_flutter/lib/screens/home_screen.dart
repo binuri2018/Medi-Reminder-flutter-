@@ -403,10 +403,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      _cancelAllPollingTimers();
-      return;
-    }
+    // IMPORTANT: Never stop `_historyPollTimer` / `_corePollTimer` on pause.
+    // History sync feeds [OutdoorAlarmService.syncFromHistory], which installs
+    // exact AlarmManager notifications for future dues. Cancelling timers when
+    // the user taps Home meant zero backend sync until the next app resume,
+    // so reminders only appeared after opening the app again.
+    //
+    // The persistent foreground service keeps this process eligible to run
+    // timers while backgrounded; [dispose] still cancels when HomeScreen is
+    // removed from the tree.
     if (state == AppLifecycleState.resumed) {
       _startPolling();
     }
@@ -704,10 +709,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final sw = Stopwatch()..start();
       final history = await _api.getHistory(limit: 30);
-      if (!mounted) return;
       if (kDebugMode) {
         debugPrint("refreshHistory completed in ${sw.elapsedMilliseconds}ms");
       }
+
+      final alarmSyncKey = _historyAlarmSyncKey(history);
+      if (force || alarmSyncKey != _lastHistoryAlarmSyncKey) {
+        await OutdoorAlarmService.syncFromHistory(history);
+        if (mounted) {
+          _lastHistoryAlarmSyncKey = alarmSyncKey;
+        }
+      }
+
+      if (!mounted) return;
+
       final shouldUpdate =
           _history.length != history.length ||
           (_history.isNotEmpty &&
@@ -720,11 +735,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         setState(() {
           _history = history;
         });
-      }
-      final alarmSyncKey = _historyAlarmSyncKey(history);
-      if (force || alarmSyncKey != _lastHistoryAlarmSyncKey) {
-        await OutdoorAlarmService.syncFromHistory(history);
-        _lastHistoryAlarmSyncKey = alarmSyncKey;
       }
       if (kDebugMode) {
         debugPrint("reminder synced from history: count=${history.length}");

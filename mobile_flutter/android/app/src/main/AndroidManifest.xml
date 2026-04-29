@@ -29,14 +29,21 @@
          in OutdoorAlarmService prompts the user to whitelist the app the
          first time the home screen loads. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Foreground service permission is reserved for a future hardening
-         step where we run a persistent service to keep polling reliable
-         even on the most aggressive OEM ROMs. Declared here so the AOT
-         build doesn't need a Gradle reconfigure if we enable it later. -->
+    <!-- Foreground service so OutdoorReminderForegroundService can run a
+         persistent low-importance notification that keeps the app process
+         alive on Samsung One UI / Xiaomi MIUI / Huawei EMUI. Without this
+         the OS puts the app to sleep after first push and the FCM
+         background handler never runs again — that was the user's
+         "first works, second never arrives" symptom. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ requires an explicit foreground-service-type permission
+         to match the type declared on the <service> below. Our service
+         exists to keep network/FCM-driven sync responsive, so dataSync is
+         the correct type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application
         android:label="mobile_flutter"
-        android:name="${applicationName}"
+        android:name=".OutdoorReminderApplication"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
@@ -65,6 +72,29 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Persistent foreground service that keeps the Dart isolate alive
+             so FCM push delivery, AlarmManager callbacks and the local
+             notification (with Done action) all fire on time even when the
+             app's main UI is in the background or the user has swiped it
+             from recents. See OutdoorReminderForegroundService.kt for the
+             full rationale. -->
+        <service
+            android:name=".OutdoorReminderForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <!-- Process-free restart of the FGS after reboot / OTA so FCM + local
+             alarms are not orphaned until the user opens the app. -->
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
