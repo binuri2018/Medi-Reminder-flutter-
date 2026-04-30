@@ -14,9 +14,6 @@ export default function Reminders({
   modeSource,
   autoModeSetting,
   lastRssi,
-  onModeChange,
-  onAutoModeSettingChange,
-  modeSaving,
   dispatchStatus,
 }) {
   const [showForm, setShowForm] = useState(false);
@@ -69,9 +66,6 @@ export default function Reminders({
         source={modeSource}
         autoModeSetting={autoModeSetting}
         lastRssi={lastRssi}
-        onChangeMode={onModeChange}
-        onAutoModeSettingChange={onAutoModeSettingChange}
-        saving={modeSaving}
       />
       <DispatchStatus status={dispatchStatus} />
 

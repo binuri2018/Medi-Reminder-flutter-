@@ -259,6 +259,12 @@ body {
   font-size: 12px;
   color: var(--text2);
 }
+.mode-ble-explainer {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text2);
+  margin: 0 0 10px 0;
+}
 .mode-badge {
   border: 1px solid var(--border);
   border-radius: 999px;

@@ -16,8 +16,8 @@ class ModeState {
 
   const ModeState({
     required this.mode,
-    this.source = "manual",
-    this.autoModeSetting = "manual",
+    this.source = "bluetooth_auto",
+    this.autoModeSetting = "bluetooth_auto",
     this.deviceId,
     this.lastRssi,
     this.lastUpdateTime,
@@ -26,8 +26,8 @@ class ModeState {
   factory ModeState.fromJson(Map<String, dynamic> json) {
     return ModeState(
       mode: json["mode"]?.toString() ?? "indoor",
-      source: json["source"]?.toString() ?? "manual",
-      autoModeSetting: json["autoModeSetting"]?.toString() ?? "manual",
+      source: json["source"]?.toString() ?? "bluetooth_auto",
+      autoModeSetting: json["autoModeSetting"]?.toString() ?? "bluetooth_auto",
       deviceId: json["deviceId"]?.toString(),
       lastRssi: json["lastRssi"] is num ? (json["lastRssi"] as num).toInt() : null,
       lastUpdateTime: json["lastUpdateTime"]?.toString(),

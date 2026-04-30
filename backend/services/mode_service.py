@@ -35,18 +35,6 @@ class ModeService:
         if request.autoModeSetting is not None:
             current["autoModeSetting"] = request.autoModeSetting.value
 
-        if (
-            request.source == ModeSourceEnum.bluetooth_auto
-            and current.get("autoModeSetting", "manual") != AutoModeSettingEnum.bluetooth_auto.value
-        ):
-            # Manual mode setting is authoritative; auto updates are ignored.
-            if request.rssi is not None:
-                current["lastRssi"] = request.rssi
-            if request.deviceId:
-                current["deviceId"] = request.deviceId
-            self._logger.info("Ignored bluetooth_auto mode update while auto mode setting is manual")
-            return self._store.set_mode_state(current)
-
         current["mode"] = request.mode.value
         current["source"] = request.source.value
         current["deviceId"] = request.deviceId or current.get("deviceId")

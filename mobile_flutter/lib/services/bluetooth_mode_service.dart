@@ -3,80 +3,161 @@ import "dart:async";
 import "package:flutter/foundation.dart";
 import "package:flutter_blue_plus/flutter_blue_plus.dart";
 import "package:permission_handler/permission_handler.dart";
-import "package:shared_preferences/shared_preferences.dart";
 
-class BluetoothAnchorDevice {
-  final String id;
-  final String name;
-
-  const BluetoothAnchorDevice({required this.id, required this.name});
-}
+import "ble_mode_controller.dart";
 
 class BluetoothModeService {
-  static const String _anchorIdKey = "bt_anchor_id";
-  static const String _anchorNameKey = "bt_anchor_name";
-  static const int indoorThreshold = -70;
-  static const int outdoorThreshold = -85;
-  static const Duration indoorConfirmDuration = Duration(seconds: 25);
-  static const Duration outdoorConfirmDuration = Duration(seconds: 45);
+  static const Duration _scanDuration = Duration(seconds: 5);
+  static const Duration _restBetweenScans = Duration(seconds: 5);
 
   final ValueNotifier<String> status = ValueNotifier<String>("idle");
   final ValueNotifier<int?> latestRssi = ValueNotifier<int?>(null);
   final ValueNotifier<String> lastReason = ValueNotifier<String>("");
 
-  DateTime? _indoorCandidateSince;
-  DateTime? _outdoorCandidateSince;
-  BluetoothAnchorDevice? _anchor;
+  final BleModeController _bleMode = BleModeController();
 
-  BluetoothAnchorDevice? get anchor => _anchor;
+  List<ScanResult> _scanSnapshot = <ScanResult>[];
+  StreamSubscription<List<ScanResult>>? _scanResultsSub;
+  Timer? _scanPulseTimer;
+  bool _scanLoopSuspended = false;
+  bool _scanPulseInFlight = false;
 
-  Future<void> loadSavedAnchor() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_anchorIdKey);
-    final name = prefs.getString(_anchorNameKey);
-    if (id != null && id.isNotEmpty) {
-      _anchor = BluetoothAnchorDevice(id: id, name: name ?? "Configured PC");
-    }
-  }
-
-  Future<void> saveAnchor(BluetoothAnchorDevice anchor) async {
-    _anchor = anchor;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_anchorIdKey, anchor.id);
-    await prefs.setString(_anchorNameKey, anchor.name);
-  }
-
-  Future<bool> ensurePermissions() async {
+  /// Grants BT scan/connect + **location while in use**. On Android (all
+  /// targeted API levels today), BLE scanning for unpaired devices normally
+  /// requires coarse/fine location; denying **Location** still makes this
+  /// fail even when "Bluetooth" looks enabled in Quick Settings.
+  Future<({bool granted, String? deniedHint})> ensurePermissions() async {
     final scan = await Permission.bluetoothScan.request();
+    if (!scan.isGranted) {
+      return (
+        granted: false,
+        deniedHint:
+            "Allow “Nearby devices” / Bluetooth scan in system settings "
+            "(Settings → Apps → this app → Permissions).",
+      );
+    }
     final connect = await Permission.bluetoothConnect.request();
+    if (!connect.isGranted) {
+      return (
+        granted: false,
+        deniedHint:
+            "Allow Bluetooth connect (pairing / connection) for this app in Settings → Permissions.",
+      );
+    }
     final location = await Permission.locationWhenInUse.request();
-    return scan.isGranted && connect.isGranted && location.isGranted;
+    if (!location.isGranted) {
+      return (
+        granted: false,
+        deniedHint:
+            "Location must be allowed while using the app — Android uses it for "
+            "Bluetooth low-energy scans. Enable Location in Settings → Permissions.",
+      );
+    }
+    return (granted: true, deniedHint: null);
   }
 
-  Future<List<ScanResult>> scanDevices() async {
-    if (!await FlutterBluePlus.isSupported) {
-      status.value = "bluetooth_not_supported";
-      return [];
+  void _ensureScanResultsListener() {
+    _scanResultsSub ??= FlutterBluePlus.scanResults.listen(
+      (results) => _scanSnapshot = List<ScanResult>.from(results),
+    );
+  }
+
+  /// Single BLE duty cycle: [_scanDuration] scan session, then [_restBetweenScans] rest.
+  /// Only one pulse timer at a time; [evaluate] does not start scans.
+  void _ensureScanPulseLoop() {
+    if (_scanPulseInFlight) return;
+    final t = _scanPulseTimer;
+    if (t != null && t.isActive) return;
+    _scanLoopSuspended = false;
+    _kickScanPulseAfter(Duration.zero);
+  }
+
+  void _kickScanPulseAfter(Duration delay) {
+    _scanPulseTimer?.cancel();
+    _scanPulseTimer = Timer(delay, () {
+      unawaited(_scanPulseTick());
+    });
+  }
+
+  Future<void> _scanPulseTick() async {
+    if (_scanLoopSuspended) return;
+    _scanPulseInFlight = true;
+    try {
+      final supported = await FlutterBluePlus.isSupported;
+      if (!supported) {
+        _kickScanPulseAfter(_restBetweenScans);
+        return;
+      }
+      final adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) {
+        _kickScanPulseAfter(_restBetweenScans);
+        return;
+      }
+
+      if (FlutterBluePlus.isScanningNow) {
+        if (kDebugMode) {
+          debugPrint("BLE scan skipped: already scanning");
+        }
+        _kickScanPulseAfter(_restBetweenScans);
+        return;
+      }
+
+      try {
+        if (kDebugMode) {
+          debugPrint("BLE scan started");
+        }
+        await FlutterBluePlus.startScan(timeout: _scanDuration);
+
+        await Future<void>.delayed(_scanDuration);
+        while (FlutterBluePlus.isScanningNow) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        if (kDebugMode) {
+          debugPrint("BLE scan stopped");
+        }
+      } catch (_) {
+        if (kDebugMode) {
+          debugPrint("BLE scan stopped");
+        }
+      }
+
+      _kickScanPulseAfter(_restBetweenScans);
+    } finally {
+      _scanPulseInFlight = false;
     }
-    final adapterState = await FlutterBluePlus.adapterState.first;
-    if (adapterState != BluetoothAdapterState.on) {
-      status.value = "bluetooth_off";
-      return [];
+  }
+
+  /// Stops the scan/rest timer chain (explicit shutdown).
+  void stopBleScanLoop() {
+    _scanLoopSuspended = true;
+    _scanPulseTimer?.cancel();
+    _scanPulseTimer = null;
+    _scanPulseInFlight = false;
+    unawaited(_scanResultsSub?.cancel());
+    _scanResultsSub = null;
+    _scanSnapshot = <ScanResult>[];
+    unawaited(FlutterBluePlus.stopScan());
+  }
+
+  /// Advertiser beacon: match [BleModeController.targetBeaconName] via device
+  /// platform name or AD flag name — not MAC ([BluetoothDevice.remoteId]).
+  ScanResult? _findTargetBeacon(List<ScanResult> results) {
+    const trimmed = BleModeController.targetBeaconName;
+    ScanResult? best;
+    for (final r in results) {
+      final dn = r.device.platformName.trim();
+      final adv = r.advertisementData.advName.trim();
+      if (dn != trimmed && adv != trimmed) continue;
+      if (best == null || r.rssi > best.rssi) {
+        best = r;
+      }
     }
-    status.value = "scanning";
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
-    final results = await FlutterBluePlus.scanResults.first;
-    status.value = results.isEmpty ? "not_found" : "scan_complete";
-    return results;
+    return best;
   }
 
   Future<BluetoothDecision> evaluate({
     required String currentMode,
   }) async {
-    if (_anchor == null) {
-      status.value = "anchor_not_configured";
-      return const BluetoothDecision.keep();
-    }
     if (!await FlutterBluePlus.isSupported) {
       status.value = "bluetooth_not_supported";
       return const BluetoothDecision.keep();
@@ -87,85 +168,43 @@ class BluetoothModeService {
       return const BluetoothDecision.keep();
     }
 
-    status.value = "scanning";
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
-    final results = await FlutterBluePlus.scanResults.first;
-    final match = _findAnchorResult(results);
-    if (match == null) {
-      status.value = "not_found";
+    _ensureScanResultsListener();
+    _ensureScanPulseLoop();
+
+    final results = List<ScanResult>.from(_scanSnapshot);
+    final match = _findTargetBeacon(results);
+
+    final now = DateTime.now();
+    final beaconDetected = match != null;
+
+    if (match != null) {
+      latestRssi.value = match.rssi;
+      status.value =
+          match.device.isConnected ? "connected" : "detected";
+
+      final name = match.device.platformName.trim().isNotEmpty
+          ? match.device.platformName.trim()
+          : match.advertisementData.advName.trim();
+      if (kDebugMode) {
+        debugPrint("BLE beacon found: name=$name rssi=${match.rssi}");
+      }
+    } else {
       latestRssi.value = null;
-      return _evaluateOutdoorCandidate(
-        currentMode: currentMode,
-        reason: "Bluetooth anchor not found during scan",
-      );
+      status.value = "not_found";
     }
 
-    final rssi = match.rssi;
-    latestRssi.value = rssi;
-    final connected = match.device.isConnected;
-    status.value = connected ? "connected" : "detected";
-    if (kDebugMode) {
-      debugPrint("Bluetooth anchor detected: id=${match.device.remoteId.str} rssi=$rssi connected=$connected");
-    }
+    final BleModeOutcome o = _bleMode.update(
+      now: now,
+      currentMode: currentMode,
+      beaconDetected: beaconDetected,
+      rssi: match?.rssi,
+    );
 
-    if (connected || rssi >= indoorThreshold) {
-      return _evaluateIndoorCandidate(currentMode: currentMode);
-    }
-    if (rssi <= outdoorThreshold) {
-      return _evaluateOutdoorCandidate(
-        currentMode: currentMode,
-        reason: "RSSI below outdoor threshold",
-      );
-    }
-
-    _indoorCandidateSince = null;
-    _outdoorCandidateSince = null;
-    return const BluetoothDecision.keep();
-  }
-
-  ScanResult? _findAnchorResult(List<ScanResult> results) {
-    if (_anchor == null) return null;
-    for (final result in results) {
-      if (result.device.remoteId.str == _anchor!.id) {
-        return result;
-      }
-      if (_anchor!.name.isNotEmpty && result.device.platformName == _anchor!.name) {
-        return result;
-      }
-    }
-    return null;
-  }
-
-  BluetoothDecision _evaluateIndoorCandidate({required String currentMode}) {
-    _outdoorCandidateSince = null;
-    _indoorCandidateSince ??= DateTime.now();
-    final stableFor = DateTime.now().difference(_indoorCandidateSince!);
-    if (stableFor >= indoorConfirmDuration && currentMode != "indoor") {
-      lastReason.value = "Bluetooth strong signal detected";
-      _indoorCandidateSince = null;
+    if (o.shouldSwitch && o.targetMode != null && o.reason != null) {
+      lastReason.value = o.reason!;
       return BluetoothDecision.switchMode(
-        targetMode: "indoor",
-        reason: lastReason.value,
-      );
-    }
-    return const BluetoothDecision.keep();
-  }
-
-  BluetoothDecision _evaluateOutdoorCandidate({
-    required String currentMode,
-    required String reason,
-  }) {
-    _indoorCandidateSince = null;
-    _outdoorCandidateSince ??= DateTime.now();
-    final stableFor = DateTime.now().difference(_outdoorCandidateSince!);
-    if (stableFor >= outdoorConfirmDuration && currentMode != "outdoor") {
-      lastReason.value = reason == "RSSI below outdoor threshold"
-          ? "RSSI below outdoor threshold"
-          : "Bluetooth lost for confirmed duration";
-      _outdoorCandidateSince = null;
-      return BluetoothDecision.switchMode(
-        targetMode: "outdoor",
-        reason: lastReason.value,
+        targetMode: o.targetMode!,
+        reason: o.reason!,
       );
     }
     return const BluetoothDecision.keep();
@@ -182,8 +221,10 @@ class BluetoothDecision {
         targetMode = null,
         reason = null;
 
-  const BluetoothDecision.switchMode({
-    required this.targetMode,
-    required this.reason,
-  }) : shouldSwitch = true;
+  BluetoothDecision.switchMode({
+    required String targetMode,
+    required String reason,
+  })  : shouldSwitch = true,
+        targetMode = targetMode,
+        reason = reason;
 }

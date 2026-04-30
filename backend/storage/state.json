@@ -1,18 +1,18 @@
 {
-  "mode": "outdoor",
-  "mode_source": "manual",
-  "auto_mode_setting": "manual",
+  "mode": "indoor",
+  "mode_source": "bluetooth_auto",
+  "auto_mode_setting": "bluetooth_auto",
   "mode_device_id": null,
-  "mode_last_rssi": null,
-  "mode_last_update_time": "2026-04-29T13:21:48.877000+00:00",
-  "mobile_device_token": "cp7QPvD3TnqFrnOJ8QwVO7:APA91bGaYojaNXDE-mFjJFCuKuP1JPCd7Co52M-sZAsJJs_QFDZEJG49wh_BWOYSsM5ytscqG31ly59odXI27JnAkrUQq4ozX_hsPk3m4Juyg2bMII7FeZY",
+  "mode_last_rssi": -53,
+  "mode_last_update_time": "2026-04-30T03:33:30.721846+00:00",
+  "mobile_device_token": "egOq2XalTOGOnXPg8yr4DZ:APA91bH4HofdG-G5YBQAccmIZJV1a2M-0-bTAenVxbybf4JtFE3crdWmwiLmOw3PaGmmX7u2MSIiD10w9tOv8kkGnYeTSJtswKQ7tT9M4BNEMLHoqoDA0OI",
   "mobile_device_platform": "android",
   "mobile_device_id": null,
   "latest_reminder": {
-    "id": "iP2nu13uy72eX4Wng0Fh",
-    "title": "dinner ",
-    "message": "dinner time ",
-    "timestamp": "2026-04-29T15:54:00Z",
+    "id": "9pBgGlU7IZnWBNLPuujR",
+    "title": "breakfast",
+    "message": "breakfast time",
+    "timestamp": "2026-04-30T03:06:00Z",
     "mode": "outdoor",
     "status": "synced",
     "acknowledgedBy": "android_phone"
@@ -771,6 +771,108 @@
       "title": "dinner ",
       "message": "dinner time ",
       "timestamp": "2026-04-29T15:54:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "87uvltAVbuCsoFkxwgEy",
+      "title": "medicine",
+      "message": "take your medicine",
+      "timestamp": "2026-04-29T20:08:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "87uvltAVbuCsoFkxwgEy",
+      "title": "medicine",
+      "message": "take your medicine",
+      "timestamp": "2026-04-29T20:08:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "1ibC8Tqsr1RMsKk5xOeo",
+      "title": "sleep",
+      "message": "sleep now",
+      "timestamp": "2026-04-29T21:39:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "1ibC8Tqsr1RMsKk5xOeo",
+      "title": "sleep",
+      "message": "sleep now",
+      "timestamp": "2026-04-29T21:39:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "zhjkdg8hqymLeSCBpLQS",
+      "title": "breakfast",
+      "message": "its breakfast time",
+      "timestamp": "2026-04-30T02:58:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "zhjkdg8hqymLeSCBpLQS",
+      "title": "breakfast",
+      "message": "its breakfast time",
+      "timestamp": "2026-04-30T02:58:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "zhjkdg8hqymLeSCBpLQS",
+      "title": "breakfast",
+      "message": "its breakfast time",
+      "timestamp": "2026-04-30T02:58:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "zhjkdg8hqymLeSCBpLQS",
+      "title": "breakfast",
+      "message": "its breakfast time",
+      "timestamp": "2026-04-30T02:58:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "45miyW3ngMxnYqlVrcYa",
+      "title": "medicine",
+      "message": "its medicine time",
+      "timestamp": "2026-04-30T03:05:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "45miyW3ngMxnYqlVrcYa",
+      "title": "medicine",
+      "message": "its medicine time",
+      "timestamp": "2026-04-30T03:05:00Z",
+      "mode": "outdoor",
+      "status": "pending"
+    },
+    {
+      "id": "9pBgGlU7IZnWBNLPuujR",
+      "title": "breakfast",
+      "message": "breakfast time",
+      "timestamp": "2026-04-30T03:06:00Z",
+      "mode": "outdoor",
+      "status": "synced",
+      "acknowledgedBy": "android_phone"
+    },
+    {
+      "id": "9pBgGlU7IZnWBNLPuujR",
+      "title": "breakfast",
+      "message": "breakfast time",
+      "timestamp": "2026-04-30T03:06:00Z",
       "mode": "outdoor",
       "status": "synced",
       "acknowledgedBy": "android_phone"

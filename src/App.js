@@ -1,21 +1,18 @@
 // src/App.js
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
-import { subscribeToReminders } from './firebase/reminders';
-import { useReminderChecker } from './hooks/useReminderChecker';
-import { useOutdoorAckSync } from './hooks/useOutdoorAckSync';
-import Reminders from './pages/Reminders';
-import Analytics from './pages/Analytics';
-import { getMode, setMode } from './services/modeApi';
-import './App.css';
+import React, { useState, useEffect, useRef } from "react";
+import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
+import { subscribeToReminders } from "./firebase/reminders";
+import { useReminderChecker } from "./hooks/useReminderChecker";
+import { useOutdoorAckSync } from "./hooks/useOutdoorAckSync";
+import Reminders from "./pages/Reminders";
+import Analytics from "./pages/Analytics";
+import { getMode, setMode } from "./services/modeApi";
+import "./App.css";
 
 function Layout({
   reminders,
   mode,
-  onModeChange,
-  onAutoModeSettingChange,
-  modeSaving,
   dispatchStatus,
   onDispatchStatus,
 }) {
@@ -73,9 +70,6 @@ function Layout({
                 modeSource={dispatchStatus.source}
                 autoModeSetting={dispatchStatus.autoModeSetting}
                 lastRssi={dispatchStatus.lastRssi}
-                onModeChange={onModeChange}
-                onAutoModeSettingChange={onAutoModeSettingChange}
-                modeSaving={modeSaving}
                 dispatchStatus={dispatchStatus}
               />
             }
@@ -87,18 +81,22 @@ function Layout({
   );
 }
 
+/** Poll `/api/mode` this often so indoor/outdoor (driven only by mobile BLE) mirrors quickly on web */
+const MODE_POLL_MS = 5000;
+
 export default function App() {
   const [reminders, setReminders] = useState([]);
-  const [mode, setModeState] = useState('indoor');
-  const [modeSaving, setModeSaving] = useState(false);
+  const [mode, setModeState] = useState("indoor");
+  const migratedAutoRef = useRef(false);
+
   const [dispatchStatus, setDispatchStatus] = useState({
-    mode: 'indoor',
-    source: 'manual',
-    autoModeSetting: 'manual',
+    mode: "indoor",
+    source: "bluetooth_auto",
+    autoModeSetting: "bluetooth_auto",
     lastRssi: null,
-    lastEvent: '',
-    lastReminderTitle: '',
-    state: 'idle',
+    lastEvent: "",
+    lastReminderTitle: "",
+    state: "idle",
   });
 
   useEffect(() => {
@@ -109,84 +107,40 @@ export default function App() {
   useEffect(() => {
     const loadMode = async () => {
       try {
-        const data = await getMode();
+        let data = await getMode();
+
+        if (!migratedAutoRef.current) {
+          if (
+            (data.autoModeSetting || "").toLowerCase() !== "bluetooth_auto"
+          ) {
+            try {
+              data = await setMode({
+                mode: data.mode || "indoor",
+                source: "bluetooth_auto",
+                autoModeSetting: "bluetooth_auto",
+                reason: "BLE beacon mode is mobile-led; unify auto setting",
+              });
+            } catch (_) {}
+          }
+          migratedAutoRef.current = true;
+        }
+
         setModeState(data.mode);
         setDispatchStatus((prev) => ({
           ...prev,
           mode: data.mode,
-          source: data.source || 'manual',
-          autoModeSetting: data.autoModeSetting || 'manual',
-          lastRssi: typeof data.lastRssi === 'number' ? data.lastRssi : null,
+          source: data.source || "bluetooth_auto",
+          autoModeSetting: data.autoModeSetting || "bluetooth_auto",
+          lastRssi: typeof data.lastRssi === "number" ? data.lastRssi : null,
         }));
       } catch {
-        // Keep indoor fallback mode if backend is not reachable.
+        // indoor fallback mode if offline
       }
     };
     loadMode();
-    const poll = setInterval(loadMode, 10000);
+    const poll = setInterval(loadMode, MODE_POLL_MS);
     return () => clearInterval(poll);
   }, []);
-
-  const handleModeChange = async (newMode) => {
-    setModeSaving(true);
-    try {
-      const data = await setMode({
-        mode: newMode,
-        source: 'manual',
-        reason: 'Manual mode switch from web app',
-      });
-      setModeState(data.mode);
-      setDispatchStatus((prev) => ({
-        ...prev,
-        mode: data.mode,
-        source: data.source || 'manual',
-        autoModeSetting: data.autoModeSetting || prev.autoModeSetting,
-        lastRssi: typeof data.lastRssi === 'number' ? data.lastRssi : prev.lastRssi,
-        lastEvent: `Mode changed to ${data.mode}`,
-        state: 'success',
-      }));
-    } catch {
-      setDispatchStatus((prev) => ({
-        ...prev,
-        lastEvent: 'Failed to change mode (backend unavailable)',
-        state: 'error',
-      }));
-    } finally {
-      setModeSaving(false);
-    }
-  };
-
-  const handleAutoModeSettingChange = async (newSetting) => {
-    setModeSaving(true);
-    try {
-      const data = await setMode({
-        mode,
-        source: 'manual',
-        autoModeSetting: newSetting,
-        reason: 'Auto mode setting changed from web app',
-      });
-      setModeState(data.mode);
-      setDispatchStatus((prev) => ({
-        ...prev,
-        mode: data.mode,
-        source: data.source || prev.source,
-        autoModeSetting: data.autoModeSetting || newSetting,
-        lastEvent:
-          newSetting === 'bluetooth_auto'
-            ? 'Bluetooth auto mode enabled'
-            : 'Manual-only mode enabled',
-        state: 'success',
-      }));
-    } catch {
-      setDispatchStatus((prev) => ({
-        ...prev,
-        lastEvent: 'Failed to update auto mode setting',
-        state: 'error',
-      }));
-    } finally {
-      setModeSaving(false);
-    }
-  };
 
   return (
     <BrowserRouter>
@@ -194,9 +148,6 @@ export default function App() {
       <Layout
         reminders={reminders}
         mode={mode}
-        onModeChange={handleModeChange}
-        onAutoModeSettingChange={handleAutoModeSettingChange}
-        modeSaving={modeSaving}
         dispatchStatus={dispatchStatus}
         onDispatchStatus={setDispatchStatus}
       />

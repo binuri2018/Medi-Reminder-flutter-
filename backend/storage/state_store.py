@@ -10,8 +10,8 @@ class StateStore:
         self._file_path = file_path or Path(__file__).resolve().parent / "state.json"
         self._state = {
             "mode": "indoor",
-            "mode_source": "manual",
-            "auto_mode_setting": "manual",
+            "mode_source": "bluetooth_auto",
+            "auto_mode_setting": "bluetooth_auto",
             "mode_device_id": None,
             "mode_last_rssi": None,
             "mode_last_update_time": None,
@@ -54,8 +54,8 @@ class StateStore:
         with self._lock:
             return {
                 "mode": self._state.get("mode", "indoor"),
-                "source": self._state.get("mode_source", "manual"),
-                "autoModeSetting": self._state.get("auto_mode_setting", "manual"),
+                "source": self._state.get("mode_source", "bluetooth_auto"),
+                "autoModeSetting": self._state.get("auto_mode_setting", "bluetooth_auto"),
                 "deviceId": self._state.get("mode_device_id"),
                 "lastRssi": self._state.get("mode_last_rssi"),
                 "lastUpdateTime": self._state.get("mode_last_update_time"),
@@ -66,11 +66,11 @@ class StateStore:
             self._state["mode"] = state.get("mode", self._state.get("mode", "indoor"))
             self._state["mode_source"] = state.get(
                 "source",
-                self._state.get("mode_source", "manual"),
+                self._state.get("mode_source", "bluetooth_auto"),
             )
             self._state["auto_mode_setting"] = state.get(
                 "autoModeSetting",
-                self._state.get("auto_mode_setting", "manual"),
+                self._state.get("auto_mode_setting", "bluetooth_auto"),
             )
             self._state["mode_device_id"] = state.get("deviceId")
             self._state["mode_last_rssi"] = state.get("lastRssi")
@@ -78,8 +78,8 @@ class StateStore:
             self._persist()
             return {
                 "mode": self._state.get("mode", "indoor"),
-                "source": self._state.get("mode_source", "manual"),
-                "autoModeSetting": self._state.get("auto_mode_setting", "manual"),
+                "source": self._state.get("mode_source", "bluetooth_auto"),
+                "autoModeSetting": self._state.get("auto_mode_setting", "bluetooth_auto"),
                 "deviceId": self._state.get("mode_device_id"),
                 "lastRssi": self._state.get("mode_last_rssi"),
                 "lastUpdateTime": self._state.get("mode_last_update_time"),

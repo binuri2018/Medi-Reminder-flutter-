@@ -29,8 +29,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final FlutterTts _tts = FlutterTts();
   final stt.SpeechToText _speech = stt.SpeechToText();
   String _mode = "indoor";
-  String _modeSource = "manual";
-  String _autoModeSetting = "manual";
+  String _modeSource = "bluetooth_auto";
+  String _autoModeSetting = "bluetooth_auto";
   String _bluetoothStatus = "idle";
   String _bluetoothReason = "";
   int? _lastRssi;
@@ -53,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _historyRefreshInFlight = false;
   bool _bluetoothTickInFlight = false;
   bool _bluetoothPermissionGranted = false;
+  /// Filled when [BluetoothModeService.ensurePermissions] fails — avoids generic text on every BLE tick.
+  String? _bluetoothPermissionHint;
   DateTime? _lastCoreRefresh;
   DateTime? _lastHistoryRefresh;
   String? _lastAlertKey;
@@ -70,6 +72,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _speechActive = false;
   String? _voiceCommandReminderId;
 
+  /// Backend `/api/mode` mode string last synced from polling or POST, used only
+  /// to suppress duplicate [ApiService.updateMode] calls from Bluetooth ticks.
+  String? _lastSentMode;
+
+  /// Prevents overlapping `/api/mode` calls when multiple async BLE ticks overlap.
+  bool _modeUpdateInFlight = false;
+
+  /// One-shot migrate backend from legacy manual/auto setting to BLE-only auto.
+  bool _migratedBleAutoSetting = false;
+
   /// Shared init future so [FlutterTts.speak] never runs before the Android
   /// TextToSpeech engine has bound (common cause of silent TTS).
   late final Future<void> _ttsInitFuture;
@@ -79,13 +91,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _ttsInitFuture = _setupTts();
-    _initBluetooth();
+    _attachBluetoothListeners();
     _startPolling();
-    // Permissions must be requested ONCE, sequentially, after the activity
-    // is attached - never from inside polling/sync code. permission_handler
-    // serializes to a single in-flight request and rejects parallel calls.
+    // Alarm + notification perms first, then Bluetooth — concurrent
+    // permission_handler requests at startup were failing BT even when later
+    // toggles looked correct. Resync on resume when user fixes Settings.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_runOneTimePermissionFlow());
+      unawaited(_runDeferredStartupPermissions());
       _onPendingTapChanged();
     });
     // Surface any reminder the user just tapped on (foreground tap, app
@@ -93,15 +105,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     OutdoorAlarmService.pendingTapNotifier.addListener(_onPendingTapChanged);
   }
 
-  bool _permissionsRequested = false;
+  bool _deferredStartupPermissionsStarted = false;
 
-  Future<void> _runOneTimePermissionFlow() async {
-    if (_permissionsRequested) return;
-    _permissionsRequested = true;
-    // Centralised permission flow: every permission is requested in series so
-    // package:permission_handler never sees overlapping requests. This is the
-    // only place ensurePermissions() should be invoked from on the UI thread.
+  /// Notification / exact-alarm / battery prompts first, then BLE — never in parallel with [BluetoothModeService.ensurePermissions].
+  Future<void> _runDeferredStartupPermissions() async {
+    if (_deferredStartupPermissionsStarted) return;
+    _deferredStartupPermissionsStarted = true;
     await OutdoorAlarmService.ensurePermissions();
+    await _syncBluetoothPermissionsWithOs();
+  }
+
+  Future<void> _syncBluetoothPermissionsWithOs() async {
+    final r = await _bluetooth.ensurePermissions();
+    if (!mounted) return;
+    _bluetoothPermissionGranted = r.granted;
+    _bluetoothPermissionHint = r.deniedHint;
+    setState(() {
+      if (!r.granted) {
+        _bluetoothStatus = "permission_denied";
+        _bluetoothReason =
+            r.deniedHint ?? "Bluetooth or location permission denied.";
+      } else {
+        _bluetoothPermissionHint = null;
+        _bluetoothReason = "";
+        if (_bluetoothStatus == "permission_denied") {
+          _bluetoothStatus = _bluetooth.status.value;
+        }
+      }
+    });
   }
 
   void _startPolling() {
@@ -124,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       unawaited(_refreshHistory(silent: true));
     });
     _bluetoothPollTimer ??= Timer.periodic(_kBluetoothTickInterval, (_) {
-      if (!mounted || _autoModeSetting != "bluetooth_auto") return;
+      if (!mounted) return;
       unawaited(_runBluetoothAutoTick());
     });
   }
@@ -150,9 +181,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Future<void> _initBluetooth() async {
-    await _bluetooth.loadSavedAnchor();
-    _bluetoothPermissionGranted = await _bluetooth.ensurePermissions();
+  void _attachBluetoothListeners() {
     _bluetooth.status.addListener(() {
       if (!mounted) return;
       setState(() {
@@ -401,6 +430,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(OutdoorAlarmService.consumePendingTap());
   }
 
+  static String? _canonicalMode(String? raw) {
+    final n = raw?.trim().toLowerCase() ?? "";
+    if (n.isEmpty) return null;
+    return n;
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // IMPORTANT: Never stop `_historyPollTimer` / `_corePollTimer` on pause.
@@ -414,6 +449,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // removed from the tree.
     if (state == AppLifecycleState.resumed) {
       _startPolling();
+      unawaited(_syncBluetoothPermissionsWithOs());
     }
   }
 
@@ -421,30 +457,55 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_bluetoothTickInFlight) return;
     _bluetoothTickInFlight = true;
     try {
-    if (_bluetooth.anchor == null) {
-      setState(() {
-        _bluetoothStatus = "anchor_not_configured";
-      });
-      return;
-    }
     if (!_bluetoothPermissionGranted) {
       setState(() {
         _bluetoothStatus = "permission_denied";
-        _bluetoothReason = "Bluetooth permission denied";
+        _bluetoothReason = _bluetoothPermissionHint ??
+            "Bluetooth or location permission denied.";
       });
       return;
     }
 
     final decision = await _bluetooth.evaluate(currentMode: _mode);
     if (!decision.shouldSwitch || decision.targetMode == null) return;
+
+    final newMode = _canonicalMode(decision.targetMode!);
+    if (newMode == null) return;
+
+    if (_lastSentMode != null && _lastSentMode == newMode) {
+      if (kDebugMode) {
+        debugPrint("Mode unchanged, skipping API call");
+      }
+      return;
+    }
+
+    if (_modeUpdateInFlight) {
+      if (kDebugMode) {
+        debugPrint("Mode update skipped: request already in flight");
+      }
+      return;
+    }
+
+    _modeUpdateInFlight = true;
+
     try {
+      _lastSentMode = newMode;
+
       final state = await _api.updateMode(
         mode: decision.targetMode!,
         source: "bluetooth_auto",
-        deviceId: _bluetooth.anchor?.id,
         rssi: _lastRssi,
         reason: decision.reason,
       );
+
+      final applied = _canonicalMode(state.mode) ?? newMode;
+      _lastSentMode = applied;
+
+      if (kDebugMode) {
+        debugPrint(
+          "Mode updated to: ${applied == "outdoor" ? "OUTDOOR" : "INDOOR"}",
+        );
+      }
       setState(() {
         _mode = state.mode;
         _modeSource = state.source;
@@ -452,7 +513,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _bluetoothReason = decision.reason ?? "";
       });
     } catch (_) {
-      // Avoid disrupting reminder polling if auto mode update fails.
+      _lastSentMode = null;
+    } finally {
+      _modeUpdateInFlight = false;
     }
     } finally {
       _bluetoothTickInFlight = false;
@@ -481,7 +544,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     try {
       final sw = Stopwatch()..start();
-      final modeState = await _api.getModeState();
+      ModeState modeState = await _api.getModeState();
+      if (!_migratedBleAutoSetting &&
+          modeState.autoModeSetting.trim().toLowerCase() !=
+              "bluetooth_auto") {
+        try {
+          modeState = await _api.updateMode(
+            mode: modeState.mode,
+            source: "bluetooth_auto",
+            autoModeSetting: "bluetooth_auto",
+            reason: "Client enforces BLE signal-based mode only",
+          );
+          _migratedBleAutoSetting = true;
+        } catch (_) {
+          // Retry migration on next refresh.
+        }
+      }
       final latest = await _api.getLatestReminder().catchError((_) => _latest);
       if (kDebugMode) {
         debugPrint("refreshCore completed in ${sw.elapsedMilliseconds}ms");
@@ -516,9 +594,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _latest = latest;
         _error = "";
       });
-      if (_autoModeSetting == "bluetooth_auto") {
-        await _runBluetoothAutoTick();
-      }
+      _lastSentMode = _canonicalMode(modeState.mode);
+
+      await _runBluetoothAutoTick();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -533,153 +611,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
       }
     }
-  }
-
-  Future<void> _configureBluetoothAnchor() async {
-    final granted = await _bluetooth.ensurePermissions();
-    _bluetoothPermissionGranted = granted;
-    if (!granted) {
-      setState(() {
-        _bluetoothStatus = "permission_denied";
-        _bluetoothReason = "Bluetooth permission denied";
-      });
-      return;
-    }
-    final results = await _bluetooth.scanDevices();
-    if (!mounted) return;
-    if (results.isEmpty) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (bottomSheetContext) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.55,
-        minChildSize: 0.35,
-        maxChildSize: 0.92,
-        builder: (ctx, scrollController) => DecoratedBox(
-          decoration: const BoxDecoration(
-            color: AppColors.slateCard,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
-                child: Text(
-                  "Choose your PC",
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  "Pick the Bluetooth device that represents your indoor computer so proximity can switch modes.",
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    color: AppColors.textSecondary,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ListView.builder(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                  itemCount: results.length,
-                  itemBuilder: (context, index) {
-                    final result = results[index];
-                    final label = result.device.platformName.isNotEmpty
-                        ? result.device.platformName
-                        : "Unknown device";
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Material(
-                        color: AppColors.slateBg,
-                        borderRadius: BorderRadius.circular(16),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            final selected = BluetoothAnchorDevice(
-                              id: result.device.remoteId.str,
-                              name: label,
-                            );
-                            Navigator.of(bottomSheetContext).pop();
-                            _bluetooth.saveAnchor(selected);
-                            if (!mounted) return;
-                            setState(() {
-                              _bluetoothStatus = "anchor_configured";
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.bluetooth_rounded,
-                                  color: AppColors.tealDeep,
-                                  size: 28,
-                                ),
-                                const SizedBox(width: 14),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        label,
-                                        style: GoogleFonts.plusJakartaSans(
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        result.device.remoteId.str,
-                                        style: GoogleFonts.plusJakartaSans(
-                                          fontSize: 12,
-                                          color: AppColors.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.tealDeep.withValues(alpha: 0.12),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Text(
-                                    "${result.rssi} dBm",
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                      color: AppColors.tealDeep,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   static String _historyAlarmSyncKey(List<ReminderModel> list) {
@@ -855,71 +786,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         _ConnectionStatusCard(
                           backendUrl: ApiService.baseUrl,
                           modeSource: _modeSource,
-                          autoModeSetting: _autoModeSetting,
                           bluetoothStatus: _bluetoothStatus,
                           rssi: _lastRssi,
-                          anchorName: _bluetooth.anchor?.name,
-                          anchorId: _bluetooth.anchor?.id,
                           bluetoothReason: _bluetoothReason,
                         ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.tonalIcon(
-                                onPressed: _configureBluetoothAnchor,
-                                icon: const Icon(Icons.bluetooth_searching_rounded),
-                                label: const Text("Link PC"),
-                                style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                              ),
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Text(
+                            "Only this phone scans the BLE beacon (name in app config). "
+                            "The web dashboard mirrors the same indoor/outdoor mode from the server.",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              height: 1.45,
+                              color: AppColors.textSecondary,
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () async {
-                                  final next = _autoModeSetting == "bluetooth_auto"
-                                      ? "manual"
-                                      : "bluetooth_auto";
-                                  try {
-                                    final state = await _api.updateMode(
-                                      mode: _mode,
-                                      source: "manual",
-                                      autoModeSetting: next,
-                                      deviceId: _bluetooth.anchor?.id,
-                                      rssi: _lastRssi,
-                                      reason: "Auto mode setting changed from mobile app",
-                                    );
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _autoModeSetting = state.autoModeSetting;
-                                      _modeSource = state.source;
-                                    });
-                                  } catch (_) {
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _error = "Failed to update auto mode setting.";
-                                    });
-                                  }
-                                },
-                                icon: Icon(
-                                  _autoModeSetting == "bluetooth_auto"
-                                      ? Icons.bluetooth_disabled_rounded
-                                      : Icons.bluetooth_connected_rounded,
-                                ),
-                                label: Text(
-                                  _autoModeSetting == "bluetooth_auto"
-                                      ? "Auto off"
-                                      : "Auto mode",
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                         const SizedBox(height: 28),
                         const _SectionTitle(
@@ -1180,21 +1062,15 @@ class _ConnectionStatusCard extends StatelessWidget {
   const _ConnectionStatusCard({
     required this.backendUrl,
     required this.modeSource,
-    required this.autoModeSetting,
     required this.bluetoothStatus,
     required this.rssi,
-    required this.anchorName,
-    required this.anchorId,
     required this.bluetoothReason,
   });
 
   final String backendUrl;
   final String modeSource;
-  final String autoModeSetting;
   final String bluetoothStatus;
   final int? rssi;
-  final String? anchorName;
-  final String? anchorId;
   final String bluetoothReason;
 
   @override
@@ -1235,13 +1111,10 @@ class _ConnectionStatusCard extends StatelessWidget {
           const SizedBox(height: 12),
           _miniRow("Server", backendUrl),
           _miniRow("Mode source", modeSource),
-          _miniRow("Auto", autoModeSetting),
           _miniRow(
             "Bluetooth",
             "$bluetoothStatus · RSSI ${rssi != null ? "$rssi dBm" : "—"}",
           ),
-          if (anchorName != null && anchorId != null)
-            _miniRow("Linked PC", "$anchorName"),
           if (bluetoothReason.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
